@@ -1,0 +1,1662 @@
+# 美团企业版开放平台
+
+## 美团企业版签名实例
+
+## 1 算法说明
+
+支持AES和SM4算法，企业可根据需要进行配置，当前默认算法为AES-ECB-128位
+
+AES支持ECB、CBC、GCM模式，密钥长度支持128位、256位
+
+SM4支持ECB、CBC、GCM模式，密钥长度为128位
+
+## 2 参数说明
+
+根据所选的算法模式，传递的参数会有所不同，具体说明如下：
+
+请求参数
+
+| 名称 | 类型 | 是否必填 | 说明 | 实例 |
+| --- | --- | --- | --- | --- |
+| accessKey | String | 是 | 美团企业版分配给客户的接入秘钥 | AB4O3CP2R3ER-TK |
+| content | String | 是 | 请求体内容，将请求参数JSON序列化后进行加密的结果值，加密秘钥使用secretKey参数 | O38ebrt4UfPIF8hZOE0LC4S7OZmI\_f-YmO1qUi8g4hrbE6Gx8DviEwOGXvCI7Wko |
+| iv | String | 否 | 可以理解为一个随机数，它的主要作用是确保相同的明文在每次加密后生成不同的密文，从而增强数据的安全性，在一次加解密过程中，iv参数必须相同。  
+ECB模式iv为空，CBC模式iv为16字节的Base64编码字符串，GCM模式iv为12字节的Base64编码字符串 | CBC：MyIT4krKi0py3rx2fD2dGw==  
+GCM：PwZfPCx+BvJUL26h |
+
+响应参数
+
+| 名称 | 类型 | 说明 | 实例 |
+| --- | --- | --- | --- |
+| traceId | String | 日志查询ID | 56a0af18ae30a168d4006c7c |
+| status | Integer | 0: 调用成功 其他值均为：调用失败 | 0 |
+| msg | String | 失败时的错误描述 |  |
+| data | String | 响应数据，将响应参数JSON序列化后进行加密的结果值，解密秘钥使用secretKey参数 | O38ebrt4UfPIF8hZOE0LC4S7OZmI\_f-YmO1qUi8g4hrbE6Gx8DviEwOGXvCI7Wko |
+| iv | String | 可以理解为一个随机数，它的主要作用是确保相同的明文在每次加密后生成不同的密文，从而增强数据的安全性，在一次加解密过程中，iv参数必须相同。  
+ECB模式iv为空，CBC模式iv为16字节的Base64编码字符串，GCM模式iv为12字节的Base64编码字符串 | CBC：MyIT4krKi0py3rx2fD2dGw==  
+GCM：PwZfPCx+BvJUL26h |
+
+## 3 加解密示例
+
+以下是以AES算法为例的加解密过程说明，SM4算法的操作方式类似。假设美团企业版分配的密钥信息如下（真实密钥数据以实际分配为准）：
+
+| 名称 | 取值 | 备注 |
+| --- | --- | --- |
+| entId | 617 | 美团企业版分配的企业ID |
+| accessKey | AB4O3CP2R3ER-TK | 请求体中需要传此值 |
+| secretKey | 2Ce0eqKh/ug5+pNnnKAsWA== | 密钥 |
+
+### 3.1 加密
+
+**iv字段生成逻辑如下** EncryptionAlgorithmEnum枚举类参考下边章节
+
+```
+private String genIvParam(EncryptionAlgorithmEnum encryptionAlgorithmEnum) {
+    // ecb模式不需要iv参数
+    if (EncryptionAlgorithmEnum.ecbMode(encryptionAlgorithmEnum)) {
+        return null;
+    }
+    int length = ;
+    // gcm模式生成12字节字节数组
+    if (EncryptionAlgorithmEnum.gcmMode(encryptionAlgorithmEnum)) {
+        length = ;
+    }
+    byte[] iv = new byte[length]; // 创建一个指定长度的字节数组来存储IV
+    SecureRandom random = new SecureRandom(); // 实例化一个安全随机数生成器
+    random.nextBytes(iv); // 使用随机数填充字节数组
+    return java.util.Base64.getEncoder().encodeToString(iv);
+}
+```
+
+**content字段生成逻辑如下**
+
+![加密流程图](https://p0.meituan.net/openplatformweb/signature_encrypt.png)
+
+**第一步：编写请求对象参数(以查询订单详情接口为例)**
+
+```
+OrderDetailQueryRequest orderDetailQueryRequest = new OrderDetailQueryRequest();
+orderDetailQueryRequest.setEntId(L);
+orderDetailQueryRequest.setTs(L);
+orderDetailQueryRequest.setSqtBizOrderId(L);
+```
+
+**第二步：转为json字符串**
+
+```
+plainText = JsonUtil.object2json(orderDetailQueryReqest)
+```
+
+json字符串明文如下：
+
+```
+{
+  	"ts":,
+  	"entId":,
+  	"sqtBizOrderId":
+}
+```
+
+**第三步：加密获取content字段** 此处只针对Java版本调用，其他语言参考各语言加解密工具类
+
+```
+// EncryptUtil类具体内容参照下面具体内容
+// encryptionAlgorithm为算法枚举类，初始化时可设置，参考下面具体内容
+content = EncryptUtil.encrypt(this.encryptionAlgorithm, plainText, this.secretKey, iv);
+```
+
+### 3.2 解密
+
+**解密data字段逻辑如下**
+
+![解密流程图](https://p0.meituan.net/openplatformweb/signature_decode.png)
+
+```
+// EncryptUtil类具体内容参照下面具体内容
+// iv为加密后的返回值，一次加解密过程iv参数必须相同
+plainText = EncryptUtil.decrypt(this.encryptionAlgorithm, data, secretKey, iv);
+// 转为对象
+orderDetailQueryResponse = JsonUtil.json2Object(plainText, OrderDetailQueryResponse.class);
+```
+
+## 4 完整调用实例
+
+### OrderDetailQueryDemo类
+
+```
+import com.meituan.sqt.client.SqtClient;
+import com.meituan.sqt.constant.CommonConstants;
+import com.meituan.sqt.enums.ResponseStatusEnum;
+import com.meituan.sqt.exception.MtSqtException;
+import com.meituan.sqt.request.in.order.OrderDetailQueryRequest;
+import com.meituan.sqt.response.in.BaseApiResponse;
+import com.meituan.sqt.response.in.order.OrderDetailQueryResult;
+
+import java.util.Objects;
+
+public class OrderDetailQueryDemo {
+
+    private static final String invokeUrl = "https://waimai-openapi.apigw.test.meituan.com/api/sqt/open/order/queryDetail";
+
+    private static SqtClient sqtClient = null;
+
+    static {
+        // 初始化SqtClient，只需要初始化一次即可
+        // entId，accessKey，secretKey需要根据不同环境动态的设置获取
+        sqtClient = new SqtClient.Builder()
+                .setEntId(CommonConstants.entId)
+                .setAccessKey(CommonConstants.accessKey)
+                .setSecretKey(CommonConstants.secretKey)
+                .setEncryptionAlgorithm(CommonConstants.encryptionAlgorithmEnum)
+                .build();
+    }
+
+    public static void main(String[] args) throws MtSqtException {
+        // 1. 构建请求对象
+        OrderDetailQueryRequest orderDetailQueryRequest = new OrderDetailQueryRequest();
+        orderDetailQueryRequest.setTs(System.currentTimeMillis());
+        orderDetailQueryRequest.setEntId(sqtClient.getEntId());
+        orderDetailQueryRequest.setSqtBizOrderId(L);
+
+        // 2. API调用
+        // 注意：超时时间默认以请求对象中注解ApiMeta上设置的为准，也可以自定义传递对应的超时时间
+        BaseApiResponse<OrderDetailQueryResult> response = sqtClient.invokeApi(invokeUrl, orderDetailQueryRequest, null, null);
+
+        // 3. 响应结果为空处理
+        if (response == null) {
+            // 处理响应结果为空情况
+            // ...
+
+        }
+
+        // 4. 获取结果
+        if(Objects.equals(ResponseStatusEnum.SUCCESS.getCode(), response.getStatus())) {
+            // 4.1 请求成功，获取订单详情查询结果
+            OrderDetailQueryResult realData = response.getRealData();
+            // 4.2 处理查询成功后的业务逻辑
+
+
+        } else {
+            // 处理请求失败场景
+            handleRespFailResult(response);
+        }
+    }
+
+    private static void handleRespFailResult(BaseApiResponse<OrderDetailQueryResult> response) {
+        // 访问频率过高
+        if (ResponseStatusEnum.HIGH_FREQUENCY_ACCESS.getCode().intValue() == response.getStatus()) {
+            // 解决方案参照：https://h5.dianping.com/app/bep-docs/open-platform-doc/guide/rate_limiting.html
+        }
+        // 访问次数超过配额
+        if (ResponseStatusEnum.EXCEED_ACCESS_NUMBER.getCode().intValue() == response.getStatus()) {
+            // 解决方案参照：https://h5.dianping.com/app/bep-docs/open-platform-doc/guide/rate_limiting.html
+        }
+        // 其它失败场景
+
+    }
+}
+```
+
+### SqtClient
+
+```
+import com.google.common.collect.Maps;
+import com.meituan.sqt.enums.EncryptionAlgorithmEnum;
+import com.meituan.sqt.enums.SdkErrorEnum;
+import com.meituan.sqt.exception.MtSqtException;
+import com.meituan.sqt.model.ApiMetaInfo;
+import com.meituan.sqt.model.HttpResponse;
+import com.meituan.sqt.request.in.BaseApiRequest;
+import com.meituan.sqt.response.in.BaseApiResponse;
+import com.meituan.sqt.utils.AnnotationUtil;
+import com.meituan.sqt.utils.EncryptUtil;
+import com.meituan.sqt.utils.HttpClientUtil;
+import com.meituan.sqt.utils.JsonUtil;
+import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.security.SecureRandom;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+
+public class SqtClient {
+
+    private static final Logger log = LoggerFactory.getLogger(SqtClient.class);
+
+    /**
+     * 企业ID
+     */
+    private Long entId;
+
+    /**
+     * 请求认证key（也可被认为是Token）
+     */
+    private String accessKey;
+
+    /**
+     * 分配的秘钥
+     */
+    private String secretKey;
+
+    /**
+     * 加密算法
+     */
+    private EncryptionAlgorithmEnum encryptionAlgorithm;
+
+    /**
+     * 旧密钥，当企业切换密钥&算法时使用该字段
+     */
+    private String oldSecretKey;
+
+    /**
+     * 旧算法，当企业切换密钥&算法时使用该字段
+     */
+    private EncryptionAlgorithmEnum oldEncryptionAlgorithm;
+
+    private SqtClient(Builder builder) {
+        this.entId = builder.entId;
+        this.accessKey = builder.accessKey;
+        this.secretKey = builder.secretKey;
+        this.encryptionAlgorithm = (builder.encryptionAlgorithm == null ? EncryptionAlgorithmEnum.AES_ECB : builder.encryptionAlgorithm);
+        this.oldSecretKey = builder.oldSecretKey;
+        this.oldEncryptionAlgorithm = builder.oldEncryptionAlgorithm;
+    }
+
+    public Long getEntId() {
+        return entId;
+    }
+
+    public String getAccessKey() {
+        return accessKey;
+    }
+
+    public String getSecretKey() {
+        return secretKey;
+    }
+
+    public EncryptionAlgorithmEnum getEncryptionAlgorithm() {
+        return encryptionAlgorithm;
+    }
+
+    public String getOldSecretKey() {
+        return oldSecretKey;
+    }
+
+    public EncryptionAlgorithmEnum getOldEncryptionAlgorithm() {
+        return oldEncryptionAlgorithm;
+    }
+
+    /**
+     * 调用服务入口
+     * @param invokeUrl
+     * @param request
+     * @param connectTimeout
+     * @param socketTimeout
+     * @param <T>
+     * @return
+     * @throws MtSqtException
+     */
+    public <T> BaseApiResponse<T> invokeApi(String invokeUrl,
+                                            BaseApiRequest<T> request,
+                                            Integer connectTimeout,
+                                            Integer socketTimeout) throws MtSqtException {
+        verifyParams(request);
+        try {
+            Map<String, String> headerMap = Maps.newHashMap();
+            headerMap.put("Accept", "application/json");
+            headerMap.put("Content-type", "application/x-www-form-urlencoded; charset=utf-8");
+
+            String rawContent = JsonUtil.object2Json(request, false);
+            Map<String, String> requestParamMap = buildRequestMap(rawContent);
+
+            ApiMetaInfo apiMetaInfo = AnnotationUtil.getApiMeta(request);
+            // 设置超时时间
+            if (connectTimeout == null && apiMetaInfo != null) {
+                connectTimeout = apiMetaInfo.getConnectTimeout();
+            }
+            if (socketTimeout == null && apiMetaInfo != null) {
+                socketTimeout = apiMetaInfo.getSocketTimeout();
+            }
+            // 检测超时时间是否为空
+            if (connectTimeout == null || socketTimeout == null) {
+                throw new MtSqtException(SdkErrorEnum.MISS_TIME_OUT_ERROR);
+            }
+
+            HttpResponse httpResponse = HttpClientUtil.invokePost(invokeUrl, headerMap, requestParamMap, connectTimeout, socketTimeout);
+
+            // 如果需要通过JSON方式调用，可以参照如下：
+//             String jsonParam = JsonUtil.object2Json(requestParamMap);
+//            HttpResponse httpResponse = HttpClientUtil.invokePost2Json(invokeUrl, jsonParam, connectTimeout, socketTimeout);
+
+            // 构建返回结果
+            BaseApiResponse<T> response = buildResponseResult(request, httpResponse);
+            return response;
+        } catch (Exception e) {
+            log.error("HTTP调用失败, 请求信息:{}, serverUrl:{}", JsonUtil.object2Json(request),invokeUrl, e);
+            throw new MtSqtException(SdkErrorEnum.REQUEST_FAILED_ERROR);
+        }
+    }
+
+    public Map<String, String> buildRequestMap(String rawContent) throws Exception {
+        // 加密内容
+        String iv = genIvParam(this.encryptionAlgorithm);
+        String content = EncryptUtil.encrypt(this.encryptionAlgorithm, rawContent, this.secretKey, iv);
+        // 设置请求参数
+        Map<String, String> requestParamMap = Maps.newHashMap();
+        requestParamMap.put("accessKey", this.accessKey);
+        requestParamMap.put("content", content);
+        if (StringUtils.isNotBlank(iv)) {
+            requestParamMap.put("iv", iv);
+        }
+        return requestParamMap;
+    }
+
+    private <T> BaseApiResponse<T> buildResponseResult(BaseApiRequest<T> request, HttpResponse httpResponse) throws Exception {
+        String responseStr = (httpResponse == null ? null : httpResponse.getBody());
+        if (StringUtils.isEmpty(responseStr)) {
+            throw new MtSqtException(SdkErrorEnum.HTTP_INVOKE_NULL_RESULT);
+        }
+        try {
+            // 响应结果JSON转对象
+            BaseApiResponse<T> baseApiResponse = JsonUtil.json2Object(responseStr, BaseApiResponse.class);
+            if (baseApiResponse == null || StringUtils.isEmpty(baseApiResponse.getData())) {
+                return baseApiResponse;
+            }
+            // 解密
+            String rawContent = decryptContent(baseApiResponse.getData(), baseApiResponse.getIv(), httpResponse);
+            // 将data转实际的数据对象结果
+            T realDataObject = request.deserializeResponse(rawContent);
+            // 赋值
+            baseApiResponse.setRealData(realDataObject);
+            return baseApiResponse;
+        } catch (Exception e) {
+            log.error("HTTP调用, 返回结果解析异常，请求信息:{}, 响应结果:{}", JsonUtil.object2Json(request), responseStr, e);
+            throw new MtSqtException(SdkErrorEnum.PARSE_RESPONSE_ERROR);
+        }
+    }
+
+    private String decryptContent(String data, String iv, HttpResponse httpResponse) throws Exception {
+        // 正常一套密钥场景，非密钥&算法切换场景，解密后返回即可
+        if (StringUtils.isBlank(this.oldSecretKey) || this.oldEncryptionAlgorithm == null) {
+            return EncryptUtil.decrypt(this.encryptionAlgorithm, data, this.secretKey, iv);
+        }
+        // 密钥切换场景，需要根据返回header中的算法进行解密
+        String encryptionAlgorithm = getHeaderValue(httpResponse.getHeader(), "X-Encryption-Algorithm");
+        String encryptionMode = getHeaderValue(httpResponse.getHeader(), "X-Encryption-Mode");
+        EncryptionAlgorithmEnum usingAlgorithm = EncryptionAlgorithmEnum.parseAlgorithm(encryptionAlgorithm, encryptionMode);
+        // 如果返回的加密算法是旧算法
+        if (Objects.equals(usingAlgorithm, this.oldEncryptionAlgorithm)) {
+            return EncryptUtil.decrypt(this.oldEncryptionAlgorithm, data, this.oldSecretKey, iv);
+        }
+        return EncryptUtil.decrypt(this.encryptionAlgorithm, data, this.secretKey, iv);
+    }
+
+    private String getHeaderValue(Map<String, List<String>> headers, String headerName) {
+        List<String> values = headers.get(headerName);
+        return (values != null && !values.isEmpty()) ? values.get() : null;
+    }
+
+    private String genIvParam(EncryptionAlgorithmEnum encryptionAlgorithmEnum) {
+        // ecb模式不需要iv参数
+        if (EncryptionAlgorithmEnum.ecbMode(encryptionAlgorithmEnum)) {
+            return null;
+        }
+        int length = ;
+        if (EncryptionAlgorithmEnum.gcmMode(encryptionAlgorithmEnum)) {
+            length = ;
+        }
+        byte[] iv = new byte[length]; // 创建一个指定长度的字节数组来存储IV
+        SecureRandom random = new SecureRandom(); // 实例化一个安全随机数生成器
+        random.nextBytes(iv); // 使用随机数填充字节数组
+        return java.util.Base64.getEncoder().encodeToString(iv);
+    }
+
+    private void verifyParams(BaseApiRequest request) throws MtSqtException {
+        if (request == null) {
+            log.error("request请求参数不能为空。");
+            throw new MtSqtException(SdkErrorEnum.MISS_PARAM_ERROR);
+        }
+    }
+
+    public static class Builder {
+
+        private Long entId;
+        private String accessKey;
+        private String secretKey;
+        private EncryptionAlgorithmEnum encryptionAlgorithm;
+        private String oldSecretKey;
+        private EncryptionAlgorithmEnum oldEncryptionAlgorithm;
+
+        public Builder setEntId(Long entId) {
+            this.entId = entId;
+            return this;
+        }
+
+        public Builder setAccessKey(String accessKey) {
+            this.accessKey = accessKey;
+            return this;
+        }
+
+        public Builder setSecretKey(String secretKey) {
+            this.secretKey = secretKey;
+            return this;
+        }
+
+        public Builder setEncryptionAlgorithm(EncryptionAlgorithmEnum encryptionAlgorithm) {
+            this.encryptionAlgorithm = encryptionAlgorithm;
+            return this;
+        }
+
+        public Builder setOldSecretKey(String oldSecretKey) {
+            this.oldSecretKey = oldSecretKey;
+            return this;
+        }
+
+        public Builder setOldEncryptionAlgorithm(EncryptionAlgorithmEnum oldEncryptionAlgorithm) {
+            this.oldEncryptionAlgorithm = oldEncryptionAlgorithm;
+            return this;
+        }
+
+        public SqtClient build() {
+            return new SqtClient(this);
+        }
+    }
+}
+```
+
+```
+public enum EncryptionAlgorithmEnum {
+    AES_ECB("AES Electronic Codebook PKCS5Padding", "AES/ECB/PKCS5Padding", "AES", "ECB"),
+    AES_CBC("AES Cipher Block Chaining PKCS5Padding", "AES/CBC/PKCS5Padding", "AES", "CBC"),
+    AES_GCM("AES Galois/Counter", "AES/GCM/NoPadding", "AES", "GCM"),
+    SM4_ECB("SM4 Electronic Codebook PKCS5Padding", "SM4/ECB/PKCS5Padding", "SM4", "ECB"),
+    SM4_CBC("SM4 Cipher Block Chaining PKCS5Padding", "SM4/CBC/PKCS5Padding", "SM4", "CBC"),
+    SM4_GCM("SM4 Galois/Counter", "SM4/GCM/NoPadding", "SM4", "GCM"),
+    ;
+
+    private String desc;
+
+    private String algorithmKey;
+
+    private String algorithmName;
+
+    private String encryptionMode;
+
+
+    EncryptionAlgorithmEnum(String desc, String algorithmKey, String algorithmName, String encryptionMode) {
+        this.desc = desc;
+        this.algorithmKey = algorithmKey;
+        this.algorithmName = algorithmName;
+        this.encryptionMode = encryptionMode;
+    }
+
+    public static boolean ecbMode(EncryptionAlgorithmEnum encryptionAlgorithmEnum) {
+        if (encryptionAlgorithmEnum == null) {
+            return false;
+        }
+        return Objects.equals(encryptionAlgorithmEnum.getEncryptionMode(), "ECB");
+    }
+
+    public static boolean gcmMode(EncryptionAlgorithmEnum encryptionAlgorithmEnum) {
+        if (encryptionAlgorithmEnum == null) {
+            return false;
+        }
+        return Objects.equals(encryptionAlgorithmEnum.getEncryptionMode(), "GCM");
+    }
+
+    public static EncryptionAlgorithmEnum parseAlgorithm(String algorithmName, String encryptionMode) {
+        if (StringUtils.isBlank(algorithmName)|| StringUtils.isBlank(encryptionMode)) {
+            return null;
+        }
+        for (EncryptionAlgorithmEnum algorithm : EncryptionAlgorithmEnum.values()) {
+            if (algorithm.getAlgorithmName().equalsIgnoreCase(algorithmName)
+                    && algorithm.getEncryptionMode().equalsIgnoreCase(encryptionMode)) {
+                return algorithm;
+            }
+        }
+
+        return null;
+    }
+
+    public String getDesc() {
+        return desc;
+    }
+
+    public String getAlgorithmKey() {
+        return algorithmKey;
+    }
+
+    public String getAlgorithmName() {
+        return algorithmName;
+    }
+
+    public String getEncryptionMode() {
+        return encryptionMode;
+    }
+}
+```
+
+### HttpClientUtil
+
+```
+// 基于apache httpclient实现
+<dependency>
+    <groupId>org.apache.httpcomponents</groupId>
+    <artifactId>httpclient</artifactId>
+    <version>4.5.2</version>
+</dependency>
+```
+
+```
+import org.apache.commons.lang3.StringUtils;
+import org.apache.http.HttpEntity;
+import org.apache.http.client.ClientProtocolException;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.methods.HttpRequestBase;
+import org.apache.http.client.utils.URIBuilder;
+import org.apache.http.conn.ssl.NoopHostnameVerifier;
+import org.apache.http.conn.ssl.SSLConnectionSocketFactory;
+import org.apache.http.entity.StringEntity;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.impl.conn.PoolingHttpClientConnectionManager;
+import org.apache.http.util.EntityUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.SocketTimeoutException;
+import java.nio.charset.Charset;
+import java.security.KeyManagementException;
+import java.security.NoSuchAlgorithmException;
+import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
+import java.util.Properties;
+
+public class HttpClientUtil {
+    private static final Logger LOGGER = LoggerFactory.getLogger(HttpClientUtil.class);
+
+    private static PoolingHttpClientConnectionManager httpClientConnectionManager = new PoolingHttpClientConnectionManager();
+    private static CloseableHttpClient httpClient = null;
+    private static CloseableHttpClient httpsClient = null;
+    private static HttpClientUtil.HttpConfig httpConfig = null;
+    private static SSLConnectionSocketFactory sslsf = null;
+    // 连接池最大连接数和每路由最大连接数可通过httpconf.properties进行配置
+    private static final String HTTP_CONF_FILE_NAME = "fenxiao-httpconf.properties";
+    private static final int MAX_TOTAL_CONNECTION = ;
+    private static final int MAX_PER_ROUTE = ;
+    private static String UTF_8 = "UTF-8";
+
+    interface ContentType {
+        String FORM_URLENCODED = "application/x-www-form-urlencoded";
+        String JSON = "application/json; charset=utf-8";
+    }
+
+    interface AcceptType {
+        String ACCEPT_JSON = "application/json";
+        String ACCEPT_ANNY = "*/*";
+    }
+
+    private HttpClientUtil() {
+        // prevent instantialization
+    }
+
+    static {
+        loadConf();
+        httpClientConnectionManager.setMaxTotal(httpConfig.getMaxTotalConnection());  // 连接池最大连接数
+        httpClientConnectionManager.setDefaultMaxPerRoute(httpConfig.getMaxPerRoute());  // 每路由最大连接数
+
+        // 通过连接池获取的httpClient
+        httpClient = HttpClients.custom().setConnectionManager(httpClientConnectionManager).build();
+        // 通过连接池获取的httpsClient, 能支持https
+        httpsClient = HttpClients.custom().setSSLSocketFactory(sslsf).setConnectionManager(httpClientConnectionManager).build();
+        LOGGER.info("HttpClient initialization");
+    }
+
+    /**
+     * 如果配置httpconf.properties, 则从该文件中读取http连接池的配置参数, 否则使用默认值
+     */
+    private static void loadConf() {
+        if (httpConfig == null) {
+            httpConfig = new HttpConfig();
+        }
+        Properties properties = new Properties();
+        try {
+            InputStream inputStream = HttpClientUtil.class.getClassLoader().getResourceAsStream(HTTP_CONF_FILE_NAME);
+
+            if (inputStream == null) {
+                LOGGER.warn("httpConfig file={} does not exist", HTTP_CONF_FILE_NAME);
+                return;
+            }
+            properties.load(inputStream);
+            int maxTotalConnection = Integer.parseInt(properties.getProperty("max_total_connection"));
+            int maxPerRoute = Integer.parseInt(properties.getProperty("max_per_route"));
+            LOGGER.info("max_total_connection={}, max_per_route={}", maxTotalConnection, maxPerRoute);
+            httpConfig.setMaxTotalConnection(maxTotalConnection);
+            httpConfig.setMaxPerRoute(maxPerRoute);
+        } catch (IOException e) {
+            LOGGER.warn("read httpConfig from file={} failed", HTTP_CONF_FILE_NAME, e);
+        } catch (NumberFormatException e) {
+            LOGGER.warn("read httpConfig from file={} failed", HTTP_CONF_FILE_NAME, e);
+        } catch (Exception e) {
+            LOGGER.warn("read httpConfig from file={} failed", HTTP_CONF_FILE_NAME, e);
+        }
+    }
+
+    private static void initHttps() {
+        X509TrustManager trustManager = new X509TrustManager() {
+            @Override
+            public void checkClientTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+            }
+
+            @Override
+            public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+            }
+
+            @Override
+            public X509Certificate[] getAcceptedIssuers() {
+                return null;
+            }
+        };
+        try {
+            SSLContext sslContext = SSLContext.getInstance("TLS");
+            // 初始化SSL上下文
+            sslContext.init(null, new TrustManager[]{trustManager}, null);
+            // SSL套接字连接工厂,NoopHostnameVerifier为信任所有服务器
+            SSLConnectionSocketFactory sslsf = new SSLConnectionSocketFactory(sslContext, NoopHostnameVerifier.INSTANCE);
+        } catch (NoSuchAlgorithmException e) {
+            LOGGER.error("初始化https支持失败", e);
+        } catch (KeyManagementException e) {
+            LOGGER.error("初始化https支持失败", e);
+        }
+    }
+
+    static class HttpConfig {
+        private int maxTotalConnection = MAX_TOTAL_CONNECTION;
+        private int maxPerRoute = MAX_PER_ROUTE;
+
+        public int getMaxTotalConnection() {
+            return maxTotalConnection;
+        }
+
+        public void setMaxTotalConnection(int maxTotalConnection) {
+            this.maxTotalConnection = maxTotalConnection;
+        }
+
+        public int getMaxPerRoute() {
+            return maxPerRoute;
+        }
+
+        public void setMaxPerRoute(int maxPerRoute) {
+            this.maxPerRoute = maxPerRoute;
+        }
+    }
+
+    public static String invokePost(String url, String body, String contentType, String accept) throws Exception {
+        URIBuilder uriBuilder = new URIBuilder();
+        valueForUriBuilder(url, uriBuilder);
+
+        HttpPost httpPost = new HttpPost(uriBuilder.build());
+
+        httpPost.addHeader("Content-type",contentType);
+        httpPost.setHeader("Accept", accept);
+        httpPost.setEntity(new StringEntity(body, Charset.forName(UTF_8)));
+
+        return sendRequest(url, httpPost);
+    }
+
+    private static String sendRequest(String url, HttpRequestBase request) throws Exception {
+        CloseableHttpClient client;
+        if (url.startsWith("https")) {
+            client = httpsClient;
+        } else {
+            client = httpClient;
+        }
+        long st = System.currentTimeMillis();
+        String responseStr;
+        int status = ;
+        try {
+            CloseableHttpResponse response = client.execute(request);
+            HttpEntity entity = response.getEntity();
+            status = response.getStatusLine().getStatusCode();
+            if (entity != null) {
+                responseStr = EntityUtils.toString(entity, UTF_8);
+                response.close();
+            } else {
+                responseStr = StringUtils.EMPTY;
+            }
+        } catch (SocketTimeoutException e) {
+            LOGGER.error("HttpClient.sendRequest, url:{}, use_time:{} ms",
+                    request.getURI(), (System.currentTimeMillis() - st), e);
+            throw e;
+        } catch (ClientProtocolException e) {
+            LOGGER.error("HttpClient.sendRequest, url:{}, use_time:{} ms",
+                    request.getURI(), (System.currentTimeMillis() - st), e);
+            throw e;
+        } catch (IOException e) {
+            LOGGER.error("HttpClient.sendRequest, url:{}, use_time:{} ms",
+                    request.getURI(), (System.currentTimeMillis() - st), e);
+            throw e;
+        } finally {
+            request.releaseConnection();
+        }
+        LOGGER.info("HttpClient Success, status:{}, url:{}, use_time:{} ms",
+                status, request.getURI(), (System.currentTimeMillis() - st));
+        return responseStr;
+    }
+
+    private static void valueForUriBuilder(String url, URIBuilder uriBuilder) {
+        Integer apartIndex = url.indexOf("?");
+        if (apartIndex == -) {
+            uriBuilder.setPath(url);
+        } else {
+            uriBuilder.setPath(url.substring(, apartIndex));
+            uriBuilder.setCustomQuery(url.substring(apartIndex + , url.length()));
+        }
+    }
+}
+```
+
+### JsonUtil
+
+```
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.type.TypeFactory;
+import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.IOException;
+import java.util.List;
+import java.util.Map;
+
+public class JsonUtil {
+    private JsonUtil() {
+
+    }
+    private static final Logger LOGGER = LoggerFactory.getLogger(JsonUtil.class);
+    private static ObjectMapper JSON_TO_OBJECT_MAPPER;
+    private static ObjectMapper OBJECT_TO_JSON_MAPPER;  // 对null对象不转换
+    private static ObjectMapper OBJECT_TO_JSON_MAPPER_CONTAIN_NULL;  // 包含null对象
+
+    static {
+        JSON_TO_OBJECT_MAPPER = new ObjectMapper();
+        JSON_TO_OBJECT_MAPPER.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+
+        OBJECT_TO_JSON_MAPPER_CONTAIN_NULL = new ObjectMapper();
+        OBJECT_TO_JSON_MAPPER_CONTAIN_NULL.configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
+
+        OBJECT_TO_JSON_MAPPER = new ObjectMapper();
+        OBJECT_TO_JSON_MAPPER.setSerializationInclusion(JsonInclude.Include.NON_NULL);
+        OBJECT_TO_JSON_MAPPER.configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
+    }
+    public static <T> T json2Object(String json, Class<T> clazz) {
+        try {
+            return json2ObjectThrowException(json, clazz);
+        } catch (Exception e) {
+            LOGGER.error("json error", e);
+            return null;
+        }
+    }
+
+    public static <T> T json2Object(String json, TypeReference typeReference) {
+        try {
+            return json2ObjectThrowException(json, typeReference);
+        } catch (Exception e) {
+            LOGGER.error("json error", e);
+            return null;
+        }
+    }
+
+    public static <T> List<T> json2ObjectList(String json, Class<T> clazz) {
+        try {
+            return json2ObjectListThrowException(json, clazz);
+        } catch (Exception e) {
+            LOGGER.error("json error", e);
+            return null;
+        }
+    }
+
+    public static String object2Json(Object object) {
+        return object2Json(object, false);
+    }
+
+    public static String object2Json(Object object, boolean containNull) {
+        try {
+            return object2JsonThrowException(object, containNull);
+        } catch (Exception e) {
+            LOGGER.error("json error", e);
+            return null;
+        }
+    }
+
+    public static Map json2Map(String json) {
+        try {
+            return json2MapThrowException(json);
+        } catch (Exception e) {
+            LOGGER.error("json error", e);
+            return null;
+        }
+    }
+
+    public static <T> T json2ObjectThrowException(String json, Class<T> clazz) throws Exception{
+        if (StringUtils.isBlank(json)) {
+            return null;
+        }
+        try {
+            return JSON_TO_OBJECT_MAPPER.readValue(json, clazz);
+        } catch (Exception e) {
+            LOGGER.error("json2Object error, json: {}", json, e);
+            throw e;
+        }
+
+    }
+
+    public static <T> T json2ObjectThrowException(String json, TypeReference typeReference) throws Exception{
+        if (StringUtils.isBlank(json)) {
+            return null;
+        }
+        try {
+            return JSON_TO_OBJECT_MAPPER.readValue(json, typeReference);
+        } catch (Exception e) {
+            LOGGER.error("json2Object error, json: {}", json, e);
+            throw e;
+        }
+
+    }
+
+    public static <T> List<T> json2ObjectListThrowException(String json, Class<T> clazz) throws IOException {
+        if (StringUtils.isBlank(json)) {
+            return null;
+        }
+        try {
+            List<T> objects = JSON_TO_OBJECT_MAPPER.readValue(json, TypeFactory.defaultInstance().constructCollectionType(List.class, clazz));
+            return objects;
+        } catch (Exception e) {
+            LOGGER.error("json2ObjectList error, json: {}", json, e);
+            throw e;
+        }
+    }
+
+    public static String object2JsonThrowException(Object object, boolean containNull) throws Exception{
+        if (object == null) {
+            return "";
+        }
+        try {
+            if (!containNull) {
+                return OBJECT_TO_JSON_MAPPER.writeValueAsString(object);
+            } else {
+                return OBJECT_TO_JSON_MAPPER_CONTAIN_NULL.writeValueAsString(object);
+            }
+        } catch (Exception e) {
+            LOGGER.error("object2Json error", e);
+            throw e;
+        }
+    }
+
+    public static Map json2MapThrowException(String json) throws Exception{
+        if (StringUtils.isBlank(json)) {
+            return null;
+        }
+        try {
+            return JSON_TO_OBJECT_MAPPER.readValue(json, Map.class);
+        } catch (Exception e) {
+            LOGGER.error("json2Map error, json: {}", json, e);
+            throw e;
+        }
+    }
+}
+```
+
+### OrderDetailQueryRequest
+
+```
+public class OrderDetailQueryRequest extends BaseApiRequest<OrderDetailQueryResult> {
+    /**
+     * 商企通订单ID
+     */
+    private Long sqtBizOrderId;
+
+    public Long getSqtBizOrderId() {
+        return sqtBizOrderId;
+    }
+
+    public void setSqtBizOrderId(Long sqtBizOrderId) {
+        this.sqtBizOrderId = sqtBizOrderId;
+    }
+
+    @Override
+    public OrderDetailQueryResult deserializeResponse(String data) {
+        return JsonUtil.json2Object(data, OrderDetailQueryResult.class);
+    }
+}
+```
+
+### BaseApiRequest
+
+```
+public abstract class BaseApiRequest<T> {
+
+    /**
+     * 13位时间戳。若请求发起时间与平台接受请求时间相差大于10分钟，平台将直接拒绝本次请求
+     */
+    private Long ts;
+
+    /**
+     * 企业ID
+     */
+    private Long entId;
+
+    /**
+     * 响应结果的加密数据解密之后转化为对应的数据模型
+     * @param data
+     * @return
+     */
+    public abstract T deserializeResponse(String data);
+
+    public Long getTs() {
+        return ts;
+    }
+
+    public void setTs(Long ts) {
+        this.ts = ts;
+    }
+
+    public Long getEntId() {
+        return entId;
+    }
+
+    public void setEntId(Long entId) {
+        this.entId = entId;
+    }
+}
+```
+
+## 5 各语言加解密工具类参考
+
+目前只有java工具类支持不同算法加解密，其余语言暂时只支持AES-ECB加密，需要时可联系企业版补充
+
+### 5.1 Java加密解密参考
+
+```
+import com.meituan.sqt.enums.EncryptionAlgorithmEnum;
+import org.apache.commons.codec.binary.Base64;
+import org.apache.commons.lang3.StringUtils;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import javax.crypto.Cipher;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.IvParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
+import java.security.Key;
+import java.security.SecureRandom;
+import java.security.Security;
+import java.security.spec.AlgorithmParameterSpec;
+import java.util.Objects;
+
+public class EncryptUtil {
+    private EncryptUtil() {
+
+    }
+
+    static {
+        Security.addProvider(new BouncyCastleProvider());
+    }
+
+    public static String encrypt(EncryptionAlgorithmEnum algorithm, String plainText, String secretKey, String iv) throws Exception {
+        SecretKey key = buildSecretKey(algorithm, secretKey);
+        AlgorithmParameterSpec params = buildIvSpec(algorithm, iv);
+        Cipher cipher = Cipher.getInstance(algorithm.getAlgorithmKey());
+        if (Objects.nonNull(params)) {
+            cipher.init(Cipher.ENCRYPT_MODE, key, params);
+        } else {
+            cipher.init(Cipher.ENCRYPT_MODE, key);
+        }
+        byte[] cipherText = cipher.doFinal(plainText.getBytes());
+        return java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(cipherText);
+    }
+
+    public static String decrypt(EncryptionAlgorithmEnum algorithm, String encryptedText, String secretKey, String iv) throws Exception {
+        SecretKey key = buildSecretKey(algorithm, secretKey);
+        AlgorithmParameterSpec params = buildIvSpec(algorithm, iv);
+        Cipher cipher = Cipher.getInstance(algorithm.getAlgorithmKey());
+        if (Objects.nonNull(params)) {
+            cipher.init(Cipher.DECRYPT_MODE, key, params);
+        } else {
+            cipher.init(Cipher.DECRYPT_MODE, key);
+        }
+        byte[] plainText = cipher.doFinal(base64Decode(encryptedText));
+        return new String(plainText);
+    }
+
+    private static AlgorithmParameterSpec buildIvSpec(EncryptionAlgorithmEnum algorithm, String iv) {
+        if (StringUtils.isBlank(iv)) {
+            return null;
+        }
+        if (EncryptionAlgorithmEnum.ecbMode(algorithm)) {
+            return null;
+        }
+        return Objects.equals(algorithm, EncryptionAlgorithmEnum.AES_GCM) || Objects.equals(algorithm, EncryptionAlgorithmEnum.SM4_GCM)
+                ? new GCMParameterSpec(, java.util.Base64.getDecoder().decode(iv))
+                : new IvParameterSpec(java.util.Base64.getDecoder().decode(iv));
+    }
+
+    private static SecretKey buildSecretKey(EncryptionAlgorithmEnum algorithm, String secretKeyString) {
+        return new SecretKeySpec(java.util.Base64.getDecoder().decode(secretKeyString), algorithm.getAlgorithmName());
+    }
+
+    private static byte[] base64Decode(String cipherText) {
+        try {
+            return java.util.Base64.getUrlDecoder().decode(cipherText);
+        } catch (Exception e) {
+            return java.util.Base64.getDecoder().decode(cipherText);
+        }
+    }
+
+    // AES加密
+    public static String aesEncrypt(String originText, String secret) throws Exception {
+        AesCypher cypher = new AesCypher(secret);
+        return cypher.encrypt(originText);
+    }
+
+    // AES解密
+    public static String aesDecrypt(String encryptedText, String secret) throws Exception{
+        AesCypher cypher = new AesCypher(secret);
+        return cypher.decrypt(encryptedText);
+    }
+
+    // 内部aes类
+    static class AesCypher {
+        private static final Logger LOGGER = LoggerFactory.getLogger(AesCypher.class);
+
+        private static String DEFAULT_SECRET = "2Ce0eqKh/ug5+pNnnKAsWA==";
+        private byte[] linebreak;
+        private SecretKey key;
+        private Cipher cipher;
+        private Base64 coder;
+
+        public AesCypher(String secret) {
+            this.linebreak = new byte[];
+
+            try {
+                this.coder = new Base64(, this.linebreak, true);
+                byte[] secrets = this.coder.decode(secret);
+                // 转换为AES专用密钥
+                this.key = new SecretKeySpec(secrets, "AES");
+                // 创建密码器，算法/工作模式/补码方式 提供商
+                this.cipher = Cipher.getInstance("AES/ECB/PKCS5Padding", "SunJCE");
+            } catch (Exception e) {
+                LOGGER.error("AesCypher.genKey NoSuchAlgorithmException", e);
+            }
+
+        }
+
+        public AesCypher() {
+            this(DEFAULT_SECRET);
+        }
+
+        public synchronized String encrypt(String plainText) throws Exception {
+            this.cipher.init(Cipher.ENCRYPT_MODE, this.key);
+            byte[] cipherText = this.cipher.doFinal(plainText.getBytes("UTF-8"));
+            return new String(this.coder.encode(cipherText));
+        }
+
+        public synchronized String decrypt(String codedText) throws Exception {
+            byte[] encypted = this.coder.decode(codedText.getBytes());
+            this.cipher.init(Cipher.DECRYPT_MODE, this.key);
+            byte[] decrypted = this.cipher.doFinal(encypted);
+            return new String(decrypted, "UTF-8");
+        }
+    }
+}
+```
+
+### 5.2 Node.js加密解密参考
+
+```
+const crypto = require('crypto');
+    
+    var SqtAESUtil = {};
+    SqtAESUtil.MyConstanst = {
+        ENCODING: 'utf8',
+        BASE64: 'base64',
+        MODE: 'aes-128-ecb',
+        IV: new Buffer(''),
+        BUFFER: 'buffer',
+        SECRETKEY: 'xd1nzb/N9Nx3+VoImzCsnw=='  //美团企业版提供的测试密钥
+    };
+    
+    
+    /**
+     * 加密
+     * @param plainText  要加密的明文内容
+     * @returns {string} 返回字符串
+     */
+    SqtAESUtil.aesEncrypt = function (plainText) {
+        var secretkey = new Buffer(SqtAESUtil.MyConstanst.SECRETKEY, SqtAESUtil.MyConstanst.BASE64);
+    
+        var cipherChunks = [];
+        var cipher = crypto.createCipheriv(SqtAESUtil.MyConstanst.MODE, secretkey, SqtAESUtil.MyConstanst.IV);
+        cipher.setAutoPadding(true);
+    
+        cipherChunks.push(cipher.update(new Buffer(plainText, SqtAESUtil.MyConstanst.ENCODING), SqtAESUtil.MyConstanst.BUFFER, SqtAESUtil.MyConstanst.BASE64));
+        cipherChunks.push(cipher.final(SqtAESUtil.MyConstanst.BASE64));
+    
+        return cipherChunks.join('');
+    }
+    
+    /**
+     *  解密
+     * @param encryptText 密文
+     * @returns {string} 字符串
+     */
+    SqtAESUtil.aesDecrypt = function (encryptText) {
+        var secretkey = new Buffer(SqtAESUtil.MyConstanst.SECRETKEY, SqtAESUtil.MyConstanst.BASE64);
+    
+        var cipherChunks = [];
+        var decipher = crypto.createDecipheriv(SqtAESUtil.MyConstanst.MODE, secretkey, SqtAESUtil.MyConstanst.IV);
+        decipher.setAutoPadding(true);
+    
+        cipherChunks.push(decipher.update(encryptText, SqtAESUtil.MyConstanst.BASE64, SqtAESUtil.MyConstanst.ENCODING));
+        cipherChunks.push(decipher.final(SqtAESUtil.MyConstanst.ENCODING));
+    
+        return cipherChunks.join('');
+    }
+    
+    /**
+     * 测试加密解密
+     */
+    SqtAESUtil.test = function () {
+        var data = '{"sign":"sgW1bxc7oatFhOJXAeHnNg==","ts":1512964057,"method":"waimai.poi.list","longitude":116488645,"latitude":40007069}';
+        var result = SqtAESUtil.aesEncrypt(data);
+    
+        console.log("加密之前明文内容： " + data);
+        console.log("nodeJs加密结果： " + result);
+        console.log("nodeJs解密结果: " + SqtAESUtil.aesDecrypt(result));
+    
+    
+        var sqt = 'UgJn07uNgW7S7fJK0R0xVbaLxoCGPQIzoP-_K4Hmp4RduGszhm2mbUs2toZhCtXKP5JGXVTZ9kGts2Wx3IJQCd90ptMoJTDB0vu7mkedEr4KZCvZn77EZLssMC5SpXilmQ-5RXHzvMIT0ASH-IXepTP_O16U37QqCkEb5L1WLy4';
+        console.log("美团企业版java生成的密文: " + sqt);
+        console.log("nodejs解密: " + SqtAESUtil.aesDecrypt(sqt));
+    }
+    
+    // 测试
+    SqtAESUtil.test();
+```
+
+### 5.3 C#加密解密&HTTP调用参考
+
+```
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Security.Cryptography;
+using System.Text;
+
+public class EncryptUtil
+{
+	#region AES加密
+    /// <summary>
+    /// AES加密
+    /// </summary>
+    /// <param name="text">明文</param>
+    /// <param name="key">密钥,长度为16的字符串</param>
+    /// <returns>密文</returns>
+    public static string AESEncode(string text, string key)
+    {
+        byte[] keys = Convert.FromBase64String(key);
+        RijndaelManaged rijndaelCipher = new RijndaelManaged();
+        rijndaelCipher.Mode = CipherMode.ECB;
+        rijndaelCipher.Padding = PaddingMode.PKCS7;
+        rijndaelCipher.KeySize = ;
+        rijndaelCipher.BlockSize = ;
+        byte[] pwdBytes = keys;
+        byte[] keyBytes = new byte[];
+        int len = pwdBytes.Length;
+        if (len > keyBytes.Length)
+            len = keyBytes.Length;
+        Array.Copy(pwdBytes, keyBytes, len);
+        rijndaelCipher.Key = keyBytes;
+        ICryptoTransform transform = rijndaelCipher.CreateEncryptor();
+        byte[] plainText = Encoding.UTF8.GetBytes(text);
+        byte[] cipherBytes = transform.TransformFinalBlock(plainText, , plainText.Length);
+        return ConvertHelper.ToBase64StringURLSafe(cipherBytes);//输出为Base64
+    }
+    #endregion
+
+    #region AES解密
+    /// <summary>
+    /// AES解密
+    /// </summary>
+    /// <param name="text">密文</param>
+    /// <param name="key">密钥,长度为16的字符串</param>
+    /// <returns>明文</returns>
+    public static string AESDecode(string text, string key)
+    {
+        RijndaelManaged rijndaelCipher = new RijndaelManaged();
+        rijndaelCipher.Mode = CipherMode.ECB;
+        rijndaelCipher.Padding = PaddingMode.PKCS7;
+        rijndaelCipher.KeySize = ;
+        rijndaelCipher.BlockSize = ;
+        byte[] encryptedData = ConvertHelper.FromBase64StringURLSafe(text);
+        byte[] pwdBytes = Convert.FromBase64String(key);
+        byte[] keyBytes = new byte[];
+        int len = pwdBytes.Length;
+        if (len > keyBytes.Length)
+            len = keyBytes.Length;
+        Array.Copy(pwdBytes, keyBytes, len);
+        rijndaelCipher.Key = keyBytes;
+        ICryptoTransform transform = rijndaelCipher.CreateDecryptor();
+        byte[] plainText = transform.TransformFinalBlock(encryptedData, , encryptedData.Length);
+        return Encoding.UTF8.GetString(plainText);
+    }
+    #endregion
+}
+```
+
+```
+/// C# HTTP调用代码实例参照
+var handler = new HttpClientHandler();
+handler.AllowAutoRedirect = false;
+var httpClient = new HttpClient(handler);
+var dict = new List<KeyValuePair<string, string>>
+{
+    new KeyValuePair<string, string>("accessKey", ApiConfigManager.MeiTuanTakeoutAccessKey),
+    new KeyValuePair<string, string>("content", loginRequestBody)
+};
+var formUrlEncodedContent = new FormUrlEncodedContent(dict);
+formUrlEncodedContent.Headers.ContentType = new MediaTypeHeaderValue("application/x-www-form-urlencoded");
+formUrlEncodedContent.Headers.ContentType.CharSet = "utf-8";
+var response = await httpClient.PostAsync(LOGIN_URL_TEST, formUrlEncodedContent);
+if (response.StatusCode == HttpStatusCode.Redirect)
+{
+    return response.Headers.Location.ToString();
+}
+```
+
+依赖的ConvertHelper如下：
+
+```
+/// 美团企业版基于Java实现，标准的加解密格式是urlSafe的Base64编码，该格式会在基础Base64编码的之上，额外处理'+'、'/'、'='
+public class ConvertHelper
+{
+    /// <summary>
+    /// 将Java安全的base64字符串转换为byte数组
+    /// </summary>
+    /// <param name="convert"></param>
+    /// <param name="javaURLSafeString"></param>
+    /// <returns></returns>
+    public static byte[] FromBase64StringURLSafe(string javaURLSafeString)
+    {
+        javaURLSafeString = javaURLSafeString.Replace("-", "+").Replace("_", "/");
+        var base64 = Encoding.ASCII.GetBytes(javaURLSafeString);
+        var padding = base64.Length *  % ;
+        if (padding != )
+        {
+            javaURLSafeString = javaURLSafeString.PadRight(javaURLSafeString.Length + padding, '=');
+        }
+        return Convert.FromBase64String(javaURLSafeString);
+    }
+
+    /// <summary>
+    /// 将byte数组转换为java安全的base64字符串
+    /// </summary>
+    /// <param name="convert"></param>
+    /// <param name="bytes"></param>
+    /// <returns></returns>
+    public static string ToBase64StringURLSafe(byte[] bytes)
+    {
+        string base64String = Convert.ToBase64String(bytes);
+        return base64String.Replace("+", "-")
+            .Replace("/", "_")
+            .Replace("=", "");
+    }
+}
+```
+
+### 5.4 GO语言加密解密参考
+
+```
+package main
+
+import (
+	"bytes"
+	"crypto/aes"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"strconv"
+)
+
+func main() {
+	keys, err := base64.StdEncoding.DecodeString("xd1nzb/N9Nx3+VoImzCsnw==")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	plainText := `{"sign":"sgW1bxc7oatFhOJXAeHnNg==","ts":1512964057,"method":"waimai.poi.list","longitude":116488645,"latitude":40007069}`
+
+	//aes encryption
+	cipherText, err := AESEcbEncrypt(plainText, keys)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println("cipherText:", cipherText)
+
+	// aes decryption
+	plainText, err = AESEcbDecrypt(cipherText, keys)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println("plainText", plainText)
+
+}
+
+//aes/ecb/pkcs7
+func AESEcbEncrypt(plainText string, key []byte) (cipherText string, err error) {
+	if len(key) !=  && len(key) !=  && len(key) !=  {
+		return "", errors.New("crypto/aes: invalid key size " + strconv.Itoa(len(key)))
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return
+	}
+	plainData := pkcs7Padding([]byte(plainText), block.BlockSize())
+	if plainData == nil {
+		err = errors.New("unsupported content to be encrypted")
+		return
+	}
+	decrypted := make([]byte, len(plainData))
+	size := block.BlockSize()
+
+	for bs, be := , size; bs < len(plainData); bs, be = bs+size, be+size {
+		block.Encrypt(decrypted[bs:be], plainData[bs:be])
+	}
+	//urlSafe
+	cipherText = base64.RawURLEncoding.EncodeToString(decrypted)
+	return
+}
+
+//aes/ecb/pkcs7
+func AESEcbDecrypt(cipherText string, key []byte) (plainText string, err error) {
+	cipherData, err := base64.RawURLEncoding.DecodeString(cipherText)
+	if err != nil {
+		return
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return
+	}
+	if len(cipherData)%block.BlockSize() !=  {
+		err = errors.New("cipher text is not a multiple of the block size")
+		return
+	}
+	size := block.BlockSize()
+	decrypted := make([]byte, len(cipherData))
+	for bs, be := , size; bs < len(cipherData); bs, be = bs+size, be+size {
+		block.Decrypt(decrypted[bs:be], cipherData[bs:be])
+	}
+	plainData := pkcsUnPadding(decrypted)
+	return string(plainData), nil
+}
+
+// The blockSize argument should be 16, 24, or 32.
+// Corresponding AES-128, AES-192, or AES-256.
+func pkcs7Padding(plainText []byte, blockSize int) []byte {
+	paddingSize := blockSize - len(plainText)%blockSize
+	paddingText := bytes.Repeat([]byte{byte(paddingSize)}, paddingSize)
+	return append(plainText, paddingText...)
+}
+
+func pkcsUnPadding(plainText []byte) []byte {
+	length := len(plainText)
+	number := int(plainText[length-])
+	return plainText[:length-number]
+}
+```
+
+### 5.5 PHP语言加密解密参考（以免登为例）
+
+```
+<?php
+function aes_encrypt(array $data, $secretKey)
+{
+    // echo json_encode($data,JSON_UNESCAPED_UNICODE);
+    $data = openssl_encrypt(json_encode($data,JSON_UNESCAPED_UNICODE), 'AES-128-ECB', base64_decode($secretKey));
+    //      var_dump($data);
+    $data = str_replace('/', '_', $data);
+    $data = str_replace('+', '-', $data);
+    $data = str_replace('=', '', $data);
+    //        dd($data);
+    return $data;
+}
+
+function aes_decrypt(string $str, $secretKey)
+    {
+        $str = str_replace('_', '/', $str);
+        $str = str_replace('-', '+', $str);
+        $data = openssl_decrypt($str, 'AES-128-ECB', base64_decode($secretKey));
+        //        dd($data);
+        // var_dump($data);
+        return json_decode($data, TRUE);
+    }
+
+function loginFree2Post($url, $data)
+{
+    // $data=json_encode($data,JSON_UNESCAPED_UNICODE);
+    $curl = curl_init();
+    curl_setopt($curl, CURLOPT_URL, $url);
+    curl_setopt($curl, CURLOPT_HEADER, TRUE);
+    curl_setopt($curl, CURLOPT_TIMEOUT, );
+    curl_setopt($curl, CURLOPT_RETURNTRANSFER, TRUE);
+    curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($curl, CURLOPT_POST, TRUE);
+    curl_setopt($curl, CURLOPT_HTTPHEADER, array(
+    'Content-Type: application/x-www-form-urlencoded;charset=UTF-8',
+    'Accept: application/json',
+));//重点
+    curl_setopt($curl, CURLOPT_POSTFIELDS, http_build_query($data));
+    $response = curl_exec($curl);
+    if (curl_errno($curl)) {
+        return curl_error($curl);
+    }
+
+    return $response;
+}
+
+function getMillisecond() {
+    $t = explode(' ', microtime());
+    list($s1, $s2) = explode(' ', microtime());
+    return (float)sprintf('%.0f',(floatval($s1) + floatval($s2)) * );
+}
+function randstr($length = ) {
+    $chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    $str = "";
+    for ($i = ; $i < $length; $i++) {
+        $str .= substr($chars, mt_rand(, strlen($chars) - ), );
+    }
+    return $str;
+}
+//美团外卖入口
+function mt_waimai($params)
+{
+    $url = 'https://waimai-openapi.apigw.test.meituan.com/api/sqt/open/login/h5/loginFree/redirection?test_open_swimlane=test-open';
+    $staffPhone = isset($params['mobile'])?$params['mobile']:''; //员工手机号 1. 登录时, staffPhone/staffEmail/staffNum 三者必填一个, 与企业员工唯一识别对应
+    $staffEmail = isset($params['staffEmail'])?$params['staffEmail']:''; //员工邮箱
+    $staffNum = isset($params['staffNum'])?$params['staffNum']:''; //员工工号
+    $externalOrgId = isset($params['externalOrgId'])?$params['externalOrgId']:''; //部门唯一标识
+    $orderId = isset($params['orderId'])?$params['orderId']:''; //唯一订单号
+
+    $ts = getMillisecond();
+    $staffInfo = ['staffPhone'=> $staffPhone];
+    $nonce = randstr();
+
+    $longitude = isset($params['longitude'])?$params['longitude']:''; //经度 116.480881
+    $latitude = isset($params['latitude'])?$params['latitude']:''; //纬度 39.989410
+    $geotype = isset($params['geotype'])?$params['geotype']:'wgs84'; //gcj02(火星坐标系)或者wgs84(国际坐标系)
+    $address = isset($params['address'])?$params['address']:''; //经纬度对应的中文地址北京市朝阳区阜通东大街6号
+    $location = ['longitude' => $longitude, 'latitude' => $latitude, 'geotype' => $geotype, 'address' => $address];
+    $bizParam = ['location' => $location];
+    $bizParam = [];
+    $data = ['productType' => 'mt_waimai', 'ts'=>$ts, 'entId' => '103393', 'staffInfo' => $staffInfo, 'nonce' => $nonce,];
+    $content = aes_encrypt($data, '+AN4Qre9BaJsmPQBSzEXGA==');
+    $postData = ['accessKey' => 'CPQ3H92TTWQQ-TK', 'content' => $content];
+    $result = loginFree2Post($url, $postData);
+    return $result;
+}
+```
+
+### 5.6 Python语言加密解密参考
+
+```
+from Crypto.Cipher import AES
+from base64 import b64decode, b64encode, urlsafe_b64decode, urlsafe_b64encode
+
+BLOCK_SIZE = AES.block_size
+
+class AESCipher:
+
+    def __init__(self, key):
+        self.key = b64decode(key)
+
+    @staticmethod
+    def pad(text):
+        return text + (BLOCK_SIZE - len(text.encode()) % BLOCK_SIZE) * chr(BLOCK_SIZE - len(text.encode()) % BLOCK_SIZE)
+
+    @staticmethod
+    def un_pad(text):
+        return text[:-ord(text[len(text) - :])]
+
+    def encrypt(self, text):
+        """
+        加密
+        """
+        text = self.pad(text).encode()
+        cipher = AES.new(key=self.key, mode=AES.MODE_ECB)
+        encrypted_text = cipher.encrypt(text)
+        return urlsafe_b64encode(encrypted_text).decode('utf-8')
+
+    def decrypt(self, encrypted_text):
+        """
+        解密
+        """
+        encrypted_text = pad_content(encrypted_text)
+        encrypted_text = urlsafe_b64decode(encrypted_text)
+        cipher = AES.new(key=self.key, mode=AES.MODE_ECB)
+        decrypted_text = cipher.decrypt(encrypted_text)
+        return self.un_pad(decrypted_text).decode('utf-8')
+    def pad_content(content):
+        mod_result = len(content) % 
+        if mod_result > :
+            padding_size =  - mod_result
+            content += '=' * padding_size
+        return content
+
+if __name__ == '__main__':
+    # 美团企业版secretKey
+    secret = 'GFfzmJDuV88zYFvCBHML6g=='
+    cipher = AESCipher(key=secret)
+    # 请求体
+    plain_text = '{"sign":"sgW1bxc7oatFhOJXAeHnNg==","ts":1512964057,"method":"waimai.poi.list","longitude":116488645,"latitude":40007069}'
+
+    # 加密
+    cipherText = cipher.encrypt(plain_text)
+    print(cipherText)
+
+    # 解密
+    plain_text = cipher.decrypt(cipherText)
+    print(plain_text)
+```
+
+## 6 算法或密钥长度切换说明
+
+本章节适用于需要切换算法或密钥长度的客户，以满足更高的安全需求。
+
+在进行切换时，美团企业版会保存旧算法和密钥30天。企业需在此期间内完成开发和上线工作。30天后，旧算法和密钥将过期，只保留最新的一套算法和密钥。
+
+在这30天内，美团企业版对于企业加密内容会尝试使用新旧两套配置进行解密。然而，对于美团企业版返回给企业的加密内容，将始终使用旧密钥和加密算法进行加密，30天过期后，返回给企业的加密内容将使用新密钥和算法加密，企业可以通过header中的X-Encryption-Algorithm、X-Encryption-Mode字段获取当前正在使用的算法和加密模式。
+
+**为了确保平滑过渡，企业在解密时需支持两套配置，解密逻辑如下**
+
+```
+/**
+ * oldSecretKey为旧密钥
+ * oldEncryptionAlgorithm为旧算法
+ * secretKey为新密钥
+ * encryptionAlgorithm为新算法
+ *
+ * @param data         密文
+ * @param iv
+ * @param httpResponse http返回，包括header和response
+ * @return
+ * @throws Exception
+ */
+private String decryptContent(String data, String iv, HttpResponse httpResponse) throws Exception {
+    // 正常一套密钥场景，非密钥&算法切换场景，解密后返回即可
+    if (StringUtils.isBlank(this.oldSecretKey) || this.oldEncryptionAlgorithm == null) {
+        return EncryptUtil.decrypt(this.encryptionAlgorithm, data, this.secretKey, iv);
+    }
+    // 密钥切换场景，需要根据返回header中的算法进行解密
+    String encryptionAlgorithm = getHeaderValue(httpResponse.getHeader(), "X-Encryption-Algorithm");
+    String encryptionMode = getHeaderValue(httpResponse.getHeader(), "X-Encryption-Mode");
+    EncryptionAlgorithmEnum usingAlgorithm = EncryptionAlgorithmEnum.parseAlgorithm(encryptionAlgorithm, encryptionMode);
+    // 如果返回的加密算法是旧算法
+    if (Objects.equals(usingAlgorithm, this.oldEncryptionAlgorithm)) {
+        return EncryptUtil.decrypt(this.oldEncryptionAlgorithm, data, this.oldSecretKey, iv);
+    }
+    return EncryptUtil.decrypt(this.encryptionAlgorithm, data, this.secretKey, iv);
+}
+```
+
+如企业侧使用的是美团企业版提供的jar包，则只需升级jar包至最新版，然后初始化sqtClient时设置新旧密钥和算法，则会自动包括上述切换逻辑，修改方式如下：
+
+```
+private static SqtClient sqtClient = null;
+
+static {
+    // 初始化SqtClient，只需要初始化一次即可
+    // entId，accessKey，secretKey需要根据不同环境动态的设置获取
+    sqtClient = new SqtClient.Builder()
+            .setEntId(CommonConstants.entId)
+            .setAccessKey(CommonConstants.accessKey)
+            .setSecretKey(CommonConstants.secretKey)
+            .setEncryptionAlgorithm(CommonConstants.encryptionAlgorithmEnum)
+            // 设置旧密钥
+            .setOldSecretKey(CommonConstants.oldSecretKey)
+            //设置旧算法
+            .setOldEncryptionAlgorithm(CommonConstants.oldEncryptionAlgorithmEnum)
+            .build();
+}
+```
+
+然后正常调用接口即可
+
+```
+public static void main(String[] args) throws MtSqtException {
+    // 1. 构建请求对象
+    OrderDetailQueryRequest orderDetailQueryRequest = new OrderDetailQueryRequest();
+    orderDetailQueryRequest.setTs(System.currentTimeMillis());
+    orderDetailQueryRequest.setEntId(sqtClient.getEntId());
+    orderDetailQueryRequest.setSqtBizOrderId(L);
+
+    // 2. API调用
+    // 注意：超时时间默认以请求对象中注解ApiMeta上设置的为准，也可以自定义传递对应的超时时间
+    BaseApiResponse<OrderDetailQueryResult> response = sqtClient.invokeApi(invokeUrl, orderDetailQueryRequest, null, null);
+
+}
+```
