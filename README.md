@@ -3,7 +3,7 @@
 中文 | [English](README_EN.md)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![npm version](https://img.shields.io/npm/v/@zibin/mcp-bisheng.svg)](https://www.npmjs.com/package/@zibin/mcp-bisheng)
+[![npm version](https://img.shields.io/npm/v/@curzbin/mcp-bisheng.svg)](https://www.npmjs.com/package/@curzbin/mcp-bisheng)
 
 > **"The movable type printing for the AI era."**
 > 像活字印刷术重新排列文字一样，BiSheng 将杂乱的现代网页重组为 AI 最易阅读的 Markdown。
@@ -62,7 +62,7 @@ BiSheng 向 MCP 客户端暴露以下工具：
   "mcpServers": {
     "bisheng": {
       "command": "npx",
-      "args": ["-y", "@zibin/mcp-bisheng"]
+      "args": ["-y", "@curzbin/mcp-bisheng"]
     }
   }
 }
@@ -85,7 +85,7 @@ Claude 会通过 MCP 调用 BiSheng，得到干净的 Markdown 文档后再继�
   "mcpServers": {
     "bisheng": {
       "command": "npx",
-      "args": ["-y", "@zibin/mcp-bisheng"]
+      "args": ["-y", "@curzbin/mcp-bisheng"]
     }
   }
 }
@@ -121,7 +121,7 @@ docker run --rm -i curzbin/mcp-bisheng:latest
 ### 4. CLI 临时使用
 
 ```bash
-npx @zibin/mcp-bisheng
+npx @curzbin/mcp-bisheng
 ```
 
 ## ⚙️ 配置 (Configuration)
@@ -132,7 +132,7 @@ npx @zibin/mcp-bisheng
 | --- | --- | --- |
 | `BROWSER_TIMEOUT_MS` | `30000` | 页面加载超时时间 (毫秒) |
 | `MAX_IMAGE_RESOURCES` | `50` | 单页最大图片资源数量 |
-| `MCP_SERVER_NAME` | `@zibin/mcp-bisheng` | MCP 服务显示名称 |
+| `MCP_SERVER_NAME` | `@curzbin/mcp-bisheng` | MCP 服务显示名称 |
 
 ## 🏗️ 架构与开发
 

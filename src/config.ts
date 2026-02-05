@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 const configSchema = z.object({
-  mcpServerName: z.string().default("@zibin/mcp-bisheng"),
+  mcpServerName: z.string().default("@curzbin/mcp-bisheng"),
   browserTimeoutMs: z.number().int().positive().default(30000),
   maxImageResources: z.number().int().positive().default(50)
 });

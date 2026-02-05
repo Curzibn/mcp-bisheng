@@ -3,7 +3,7 @@
 [中文](README.md) | English
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![npm version](https://img.shields.io/npm/v/@zibin/mcp-bisheng.svg)](https://www.npmjs.com/package/@zibin/mcp-bisheng)
+[![npm version](https://img.shields.io/npm/v/@curzbin/mcp-bisheng.svg)](https://www.npmjs.com/package/@curzbin/mcp-bisheng)
 
 > **"The movable type printing for the AI era."**
 > Just as movable type printing reorganized characters to spread knowledge, BiSheng reorganizes the chaotic modern web into clean, AI-friendly Markdown.
@@ -62,7 +62,7 @@ Add the following configuration to your `claude_desktop_config.json`:
   "mcpServers": {
     "bisheng": {
       "command": "npx",
-      "args": ["-y", "@zibin/mcp-bisheng"]
+      "args": ["-y", "@curzbin/mcp-bisheng"]
     }
   }
 }
@@ -85,7 +85,7 @@ In Cursor, open “Settings → MCP Servers” (or the MCP configuration entry) 
   "mcpServers": {
     "bisheng": {
       "command": "npx",
-      "args": ["-y", "@zibin/mcp-bisheng"]
+      "args": ["-y", "@curzbin/mcp-bisheng"]
     }
   }
 }
@@ -121,7 +121,7 @@ docker run --rm -i curzbin/mcp-bisheng:latest
 ### 4. CLI (Temporary Use)
 
 ```bash
-npx @zibin/mcp-bisheng
+npx @curzbin/mcp-bisheng
 ```
 
 ## ⚙️ Configuration
@@ -132,7 +132,7 @@ You can adjust BiSheng's behavior using environment variables:
 | --- | --- | --- |
 | `BROWSER_TIMEOUT_MS` | `30000` | Page load timeout (in milliseconds). |
 | `MAX_IMAGE_RESOURCES` | `50` | Maximum number of image resources allowed per page. |
-| `MCP_SERVER_NAME` | `@zibin/mcp-bisheng` | The display name of the MCP server. |
+| `MCP_SERVER_NAME` | `@curzbin/mcp-bisheng` | The display name of the MCP server. |
 
 ## 🏗️ Development
 
