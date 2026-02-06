@@ -95,8 +95,8 @@ export function createTools(server: McpServer, config: AppConfig): void {
         throw err;
       }
 
-      const article = extractArticleFromHtml(pageContent.html, pageContent.url);
-      const markdownResult = convertArticleToMarkdown(article);
+      const article = await extractArticleFromHtml(pageContent.html, pageContent.url);
+      const markdownResult = await convertArticleToMarkdown(article);
 
       let savedPath: string | undefined;
 

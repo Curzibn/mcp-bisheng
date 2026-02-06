@@ -1,5 +1,4 @@
-import TurndownService from "turndown";
-import { gfm } from "turndown-plugin-gfm";
+import type TurndownService from "turndown";
 import { HtmlArticle } from "./html";
 
 export type MarkdownResult = {
@@ -183,8 +182,12 @@ function convertToFencedCodeBlock(node: Element, options: { fence: string }): st
   );
 }
 
-function buildTurndownService(baseURI: string): TurndownService {
-  const service = new TurndownService({
+async function buildTurndownService(baseURI: string): Promise<TurndownService> {
+  const [{ default: TurndownServiceClass }, { gfm }] = await Promise.all([
+    import("turndown"),
+    import("turndown-plugin-gfm")
+  ]);
+  const service = new TurndownServiceClass({
     headingStyle: "atx",
     bulletListMarker: "-",
     codeBlockStyle: "fenced",
@@ -267,8 +270,8 @@ function buildTurndownService(baseURI: string): TurndownService {
   return service;
 }
 
-export function convertArticleToMarkdown(article: HtmlArticle): MarkdownResult {
-  const service = buildTurndownService(article.url);
+export async function convertArticleToMarkdown(article: HtmlArticle): Promise<MarkdownResult> {
+  const service = await buildTurndownService(article.url);
   let body = service.turndown(article.content);
   body = stripSpecialChars(body);
 

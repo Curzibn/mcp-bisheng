@@ -8,7 +8,7 @@ async function main() {
   const transport = new StdioServerTransport();
   const server = new McpServer({
     name: config.mcpServerName,
-    version: "0.1.0"
+    version: "0.1.3"
   });
 
   createTools(server, config);

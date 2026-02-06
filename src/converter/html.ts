@@ -1,6 +1,3 @@
-import { JSDOM } from "jsdom";
-import { Readability } from "@mozilla/readability";
-
 export type HtmlArticle = {
   title: string | null;
   content: string;
@@ -9,7 +6,10 @@ export type HtmlArticle = {
   url: string;
 };
 
-function ensureBaseElement(dom: JSDOM, url: string) {
+function ensureBaseElement(
+  dom: { window: { document: Document } },
+  url: string
+) {
   const document = dom.window.document;
   const head = document.head ?? document.createElement("head");
   if (!document.head && document.documentElement) {
@@ -26,8 +26,12 @@ function ensureBaseElement(dom: JSDOM, url: string) {
   }
 }
 
-export function extractArticleFromHtml(html: string, url: string): HtmlArticle {
-  const dom = new JSDOM(html, { url });
+export async function extractArticleFromHtml(html: string, url: string): Promise<HtmlArticle> {
+  const [{ JSDOM: JSDOMClass }, { Readability }] = await Promise.all([
+    import("jsdom"),
+    import("@mozilla/readability")
+  ]);
+  const dom = new JSDOMClass(html, { url });
   ensureBaseElement(dom, url);
   const document = dom.window.document;
   const reader = new Readability(document);

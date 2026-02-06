@@ -62,7 +62,7 @@ BiSheng 向 MCP 客户端暴露以下工具：
   "mcpServers": {
     "bisheng": {
       "command": "npx",
-      "args": ["-y", "@curzbin/mcp-bisheng"]
+      "args": ["-y", "@curzbin/mcp-bisheng@0.1.3"]
     }
   }
 }
@@ -85,7 +85,7 @@ Claude 会通过 MCP 调用 BiSheng，得到干净的 Markdown 文档后再继�
   "mcpServers": {
     "bisheng": {
       "command": "npx",
-      "args": ["-y", "@curzbin/mcp-bisheng"]
+      "args": ["-y", "@curzbin/mcp-bisheng@0.1.3"]
     }
   }
 }
@@ -121,7 +121,7 @@ docker run --rm -i curzbin/mcp-bisheng:latest
 ### 4. CLI 临时使用
 
 ```bash
-npx @curzbin/mcp-bisheng
+npx @curzbin/mcp-bisheng@0.1.3
 ```
 
 ## ⚙️ 配置 (Configuration)

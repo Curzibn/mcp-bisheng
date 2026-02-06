@@ -62,7 +62,7 @@ Add the following configuration to your `claude_desktop_config.json`:
   "mcpServers": {
     "bisheng": {
       "command": "npx",
-      "args": ["-y", "@curzbin/mcp-bisheng"]
+      "args": ["-y", "@curzbin/mcp-bisheng@0.1.3"]
     }
   }
 }
@@ -85,7 +85,7 @@ In Cursor, open “Settings → MCP Servers” (or the MCP configuration entry) 
   "mcpServers": {
     "bisheng": {
       "command": "npx",
-      "args": ["-y", "@curzbin/mcp-bisheng"]
+      "args": ["-y", "@curzbin/mcp-bisheng@0.1.3"]
     }
   }
 }
@@ -121,7 +121,7 @@ docker run --rm -i curzbin/mcp-bisheng:latest
 ### 4. CLI (Temporary Use)
 
 ```bash
-npx @curzbin/mcp-bisheng
+npx @curzbin/mcp-bisheng@0.1.3
 ```
 
 ## ⚙️ Configuration

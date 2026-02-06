@@ -1,4 +1,4 @@
-import { chromium, type Browser, type BrowserContext, type Route } from "playwright";
+import type { Browser, BrowserContext, Route } from "playwright";
 
 export type BrowserContextOptions = {
   timeoutMs: number;
@@ -60,6 +60,7 @@ function createDefaultBrowserInstance(): BrowserInstance {
 
   const ensureBrowser = async (): Promise<Browser> => {
     if (!browserPromise) {
+      const { chromium } = await import("playwright");
       browserPromise = chromium.launch({
         headless: true
       });
