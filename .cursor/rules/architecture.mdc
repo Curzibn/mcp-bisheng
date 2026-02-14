@@ -1,0 +1,42 @@
+---
+description: BiSheng MCP Server 架构约定与设计规范
+alwaysApply: true
+---
+
+# 架构约定
+
+## 分层架构
+
+项目采用三层架构，依赖方向自上而下，禁止跨层或反向依赖：
+
+```
+server/  →  browser/  →  converter/
+(MCP层)     (浏览器层)    (转换层)
+```
+
+- `server/` 负责 MCP 协议交互和工具注册
+- `browser/` 负责 Playwright 浏览器实例管理和页面加载
+- `converter/` 负责 HTML 提取和 Markdown 转换
+- `utils/` 为各层提供通用工具，不依赖任何业务层
+- `config.ts` 使用 Zod schema 管理配置，环境变量须提供合理默认值
+
+## 设计模式
+
+- 浏览器实例采用 **单例模式** 懒加载复用
+- 页面控制器采用 **工厂函数**（`createXxxController`）
+- 优先使用纯函数，通过参数传递依赖
+- 运行时校验使用 Zod，禁止手动 type assertion 替代校验
+
+## 技术栈约束
+
+- TypeScript strict 模式，ESM 模块（`import/export`）
+- 异步操作统一使用 `async/await`
+- 构建工具 `tsdown`，测试框架 `vitest`
+- 文件命名 kebab-case，函数/变量 camelCase，类型 PascalCase
+
+## 安全要求
+
+- URL 仅允许 http/https 协议
+- 必须包含 SSRF 防护（私有 IP 拦截）
+- 浏览器资源（图片等）须有数量上限
+- 所有外部操作须配置超时

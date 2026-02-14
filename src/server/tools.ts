@@ -25,6 +25,20 @@ const installChromiumInputSchema = z.object({
   with_deps: z.boolean().optional().default(false)
 });
 
+const scanDocsTocInputSchema = z.object({
+  url: z
+    .string()
+    .url()
+    .describe("The documentation website URL to scan. Only http/https are supported."),
+  max_depth: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .default(10)
+    .describe("Maximum depth to scan the table of contents tree, default is 10.")
+});
+
 function isChromiumMissingError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
   return (
@@ -148,6 +162,56 @@ export function createTools(server: McpServer, config: AppConfig): void {
           content: [{ type: "text" as const, text }]
         };
       }
+    }
+  );
+
+  server.registerTool(
+    "scan_docs_toc",
+    {
+      description:
+        "Scan the table of contents (TOC) structure from a documentation website. Returns a structured tree of all documentation pages with their titles and URLs. AI can use this to download multiple pages and combine them into a complete document.",
+      inputSchema: scanDocsTocInputSchema
+    },
+    async (args) => {
+      const url = new URL(args.url);
+
+      if (url.protocol !== "http:" && url.protocol !== "https:") {
+        throw new Error("Only http and https protocols are allowed");
+      }
+
+      if (isPrivateHost(url)) {
+        throw new Error("Access to private network addresses is not allowed");
+      }
+
+      const controller = createPageController();
+      let tocResult;
+      try {
+        tocResult = await controller.scanToc({
+          url: args.url,
+          timeoutMs: config.browserTimeoutMs,
+          maxImageResources: config.maxImageResources,
+          maxDepth: args.max_depth
+        });
+      } catch (err) {
+        if (isChromiumMissingError(err)) {
+          throw new Error(
+            "Chromium is not installed. Please call the install_chromium tool to install Chromium first, then retry scan_docs_toc."
+          );
+        }
+        throw err;
+      }
+
+      const resultJson = JSON.stringify(tocResult, null, 2);
+      const text = `Found ${tocResult.totalCount} documentation pages:\n\n${resultJson}`;
+
+      return {
+        content: [
+          {
+            type: "text",
+            text
+          }
+        ]
+      };
     }
   );
 }

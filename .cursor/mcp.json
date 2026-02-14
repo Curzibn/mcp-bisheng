@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "bisheng": {
+      "command": "node",
+      "args": ["bin/mcp-bisheng.js"]
+    }
+  }
+}
