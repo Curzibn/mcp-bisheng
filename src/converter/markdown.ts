@@ -10,6 +10,9 @@ function validateUri(href: string, baseUri: string): string {
     new URL(href);
     return href;
   } catch {
+    if (href.startsWith("#")) {
+      return new URL(href, baseUri).href;
+    }
     const base = new URL(baseUri);
     if (href.startsWith("/")) {
       return base.origin + href;
@@ -61,12 +64,11 @@ function extractFormattedText(element: HTMLElement): string {
     let hasLineNumbers = false;
     const processedLines = lines.map((line) => {
       const trimmedLine = line.trimStart();
-      const lineNumberMatch = trimmedLine.match(/^(\d+)([\s\t]+|)(.*)$/);
-      if (lineNumberMatch && lineNumberMatch[1]) {
+      const lineNumberMatch = trimmedLine.match(/^(\d+)(\t| {2,})(.+)$/);
+      if (lineNumberMatch) {
         hasLineNumbers = true;
-        const codePart = lineNumberMatch[3] || "";
         const originalIndent = line.match(/^(\s*)/)?.[1] || "";
-        return originalIndent + codePart;
+        return originalIndent + lineNumberMatch[3];
       }
       return line;
     });
@@ -83,11 +85,10 @@ function extractFormattedText(element: HTMLElement): string {
 
   const lines = text.split("\n").map((line) => {
     const trimmedLine = line.trimStart();
-    const lineNumberMatch = trimmedLine.match(/^(\d+)([\s\t]+|)(.*)$/);
-    if (lineNumberMatch && lineNumberMatch[1]) {
-      const codePart = lineNumberMatch[3] || "";
+    const lineNumberMatch = trimmedLine.match(/^(\d+)(\t| {2,})(.+)$/);
+    if (lineNumberMatch) {
       const originalIndent = line.match(/^(\s*)/)?.[1] || "";
-      return originalIndent + codePart.trimEnd();
+      return originalIndent + lineNumberMatch[3].trimEnd();
     }
     return line.trimEnd();
   });
@@ -105,21 +106,15 @@ function extractFormattedText(element: HTMLElement): string {
 
   let result = formattedLines.join("\n").replace(/\n+$/, "");
 
-  if (!result.includes("\n") && textContent && textContent.length > 50) {
-    const numberedPattern = /(\d+)[\s\t]*([^\d\n]+)/g;
-    const matches = Array.from(textContent.matchAll(numberedPattern));
-    if (matches.length > 1) {
-      result = matches.map((m) => m[2].trimStart()).join("\n");
-    }
-  }
-
   result = removeLineNumbers(result);
 
   const finalLines = result.split("\n");
   const cleanedFinalLines = finalLines.map((line) => {
     const trimmed = line.trimStart();
-    if (trimmed.match(/^\d+[\s\t]*/)) {
-      return line.replace(/^\s*\d+[\s\t]*/, "");
+    const m = trimmed.match(/^(\d+)(\t| {2,})(.+)$/);
+    if (m) {
+      const originalIndent = line.match(/^(\s*)/)?.[1] || "";
+      return originalIndent + m[3];
     }
     return line;
   });
@@ -160,10 +155,10 @@ function convertToFencedCodeBlock(node: Element, options: { fence: string }): st
     .split("\n")
     .map((line) => {
       const trimmed = line.trimStart();
-      const lineNumberMatch = trimmed.match(/^(\d+)([\s\t]*)(.*)$/);
-      if (lineNumberMatch && lineNumberMatch[1]) {
+      const lineNumberMatch = trimmed.match(/^(\d+)(\t| {2,})(.+)$/);
+      if (lineNumberMatch) {
         const originalIndent = line.match(/^(\s*)/)?.[1] || "";
-        return originalIndent + (lineNumberMatch[3] || "");
+        return originalIndent + lineNumberMatch[3];
       }
       return line;
     })
@@ -209,6 +204,9 @@ async function buildTurndownService(baseURI: string): Promise<TurndownService> {
     replacement(_content: string, node: Node) {
       const el = node as Element;
       const src = el.getAttribute("src") ?? "";
+      if (src.startsWith("data:")) {
+        return cleanAttribute(el.getAttribute("alt")) || "";
+      }
       const resolved = validateUri(src, baseURI);
       const alt = cleanAttribute(el.getAttribute("alt"));
       const title = cleanAttribute(el.getAttribute("title"));
@@ -270,12 +268,56 @@ async function buildTurndownService(baseURI: string): Promise<TurndownService> {
   return service;
 }
 
+function isAnchorLinkList(block: string): boolean {
+  const items = block.trim().split("\n").filter((l) => l.trim());
+  return items.length > 0 && items.every((item) => /\]\([^)]*#[^)]*\)/.test(item));
+}
+
+function cleanMarkdown(body: string, title: string): string {
+  let result = body;
+
+  const headingMatch = result.match(/^(#{1,6})\s+(.+)/m);
+  if (headingMatch) {
+    const firstHeadingText = headingMatch[2].trim();
+    if (firstHeadingText === title.trim()) {
+      result = result.replace(headingMatch[0], "").replace(/^\n+/, "");
+    }
+  }
+
+  result = result.replace(/\[]\([^)]*\)/g, "");
+
+  result = result.replace(/^!\[.*?\]\(.*?\)\s*$/gm, "");
+
+  const leadingTocPattern = /^((?:[-*+]|\d+\.)\s+\[.+?\]\([^)]*#[^)]*\)\s*\n?)+/;
+  const leadingMatch = result.match(leadingTocPattern);
+  if (leadingMatch && isAnchorLinkList(leadingMatch[0])) {
+    result = result.slice(leadingMatch[0].length).replace(/^\n+/, "");
+  }
+
+  const trailingListPattern = /(?:\n{2,})((?:[-*+]|\d+\.)\s+\[.+?\]\([^)]*#[^)]*\)\s*\n?)+\s*$/;
+  const trailingMatch = result.match(trailingListPattern);
+  if (trailingMatch && isAnchorLinkList(trailingMatch[0])) {
+    result = result.slice(0, result.length - trailingMatch[0].length);
+  }
+
+  result = result.replace(/\n+\[上一篇]\(.*?\)[\s\S]*$/m, "");
+  result = result.replace(/\n+\[Previous]\(.*?\)[\s\S]*$/mi, "");
+
+  result = result.replace(/(\n\[.+?]\(.+?\))*\n.*?©.*$/s, "");
+  result = result.replace(/\n.*All Rights Reserved.*$/i, "");
+
+  result = result.replace(/\n{3,}/g, "\n\n");
+
+  return result.trim();
+}
+
 export async function convertArticleToMarkdown(article: HtmlArticle): Promise<MarkdownResult> {
   const service = await buildTurndownService(article.url);
   let body = service.turndown(article.content);
   body = stripSpecialChars(body);
 
   const title = article.title ?? "Untitled";
+  body = cleanMarkdown(body, title);
   const markdown = `# ${title}\n\n${body}`.trim();
 
   return {

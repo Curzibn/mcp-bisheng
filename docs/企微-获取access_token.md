@@ -18,8 +18,8 @@
 
 | 参数 | 必须 | 说明 |
 | --- | --- | --- |
-| corpid | 是 | 企业ID，获取方式参考：[术语说明-corpid](https://developer.work.weixin.qq.com/document/path/91039/#14953/corpid) |
-| corpsecret | 是 | 应用的凭证密钥，**注意应用需要是启用状态**，获取方式参考：[术语说明-secret](https://developer.work.weixin.qq.com/document/path/91039/#14953/secret) |
+| corpid | 是 | 企业ID，获取方式参考：[术语说明-corpid](https://developer.work.weixin.qq.com/document/path/91039#14953/corpid) |
+| corpsecret | 是 | 应用的凭证密钥，**注意应用需要是启用状态**，获取方式参考：[术语说明-secret](https://developer.work.weixin.qq.com/document/path/91039#14953/secret) |
 
 **权限说明：**  
 每个应用有独立的secret，获取到的access\_token只能本应用使用，所以每个应用的access\_token应该分开来获取
@@ -28,10 +28,10 @@
 
 ```javascript
 {
-   "errcode": ,
+   "errcode": 0,
    "errmsg": "ok",
    "access_token": "accesstoken000001",
-   "expires_in": 
+   "expires_in": 7200
 }
 ```
 

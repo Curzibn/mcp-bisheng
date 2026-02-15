@@ -1,5 +1,6 @@
 import type { BrowserContext } from "playwright";
 import { ensureBrowserInstance } from "./engine";
+import { logger } from "../utils/logger";
 
 export type PageLoadOptions = {
   url: string;
@@ -141,6 +142,10 @@ function removeHiddenNodesAndGetHTML(): string {
   });
 
   document.body?.querySelectorAll("pre, code").forEach((codeElement: Element) => {
+    codeElement.querySelectorAll(
+      '[class*="line-number"], [class*="linenumber"], [class*="line-num"], [class*="lineNum"], [class*="lineNo"], [class*="line-no"], [data-line-number]'
+    ).forEach((el) => el.remove());
+
     const walker = document.createTreeWalker(codeElement, NodeFilter.SHOW_TEXT, null);
     let node: Node | null;
     while ((node = walker.nextNode())) {
@@ -149,9 +154,10 @@ function removeHiddenNodesAndGetHTML(): string {
         const lines = text.split("\n");
         const cleanedLines = lines.map((line) => {
           const trimmed = line.trimStart();
-          const match = trimmed.match(/^(\d+)[\s\t]*(.*)$/);
+          const match = trimmed.match(/^(\d+)(\t| {2,})(.+)$/);
           if (match) {
-            return line.replace(/^\s*\d+[\s\t]*/, "");
+            const originalIndent = line.match(/^(\s*)/)?.[1] || "";
+            return originalIndent + match[3];
           }
           return line;
         });
@@ -179,6 +185,47 @@ function removeHiddenNodesAndGetHTML(): string {
     baseEl.setAttribute("href", window.location.href);
   }
 
+  const sidebarVw = window.innerWidth;
+  const sidebarVh = window.innerHeight;
+  const sidebarSelectors = [
+    "nav", "aside",
+    '[role="navigation"]', '[role="menu"]', '[role="menubar"]',
+    '[class*="sidebar"]', '[class*="sidenav"]', '[class*="side-nav"]',
+    '[class*="side_nav"]', '[class*="sideNav"]',
+    '[class*="menu"]', '[class*="toc"]', '[class*="catalog"]'
+  ];
+  const sidebarSeen = new Set<Element>();
+  sidebarSelectors.forEach((sel) => {
+    try {
+      document.querySelectorAll(sel).forEach((el) => {
+        if (sidebarSeen.has(el)) return;
+        sidebarSeen.add(el);
+        const rect = el.getBoundingClientRect();
+        if (!rect || rect.width === 0 || rect.height === 0) return;
+        const isTall = rect.height > sidebarVh * 0.3;
+        const isNarrow = rect.width < sidebarVw * 0.4;
+        const centerX = rect.left + rect.width / 2;
+        const isOnSide = centerX < sidebarVw * 0.3 || centerX > sidebarVw * 0.7;
+        if (isTall && isNarrow && isOnSide) {
+          el.remove();
+        }
+      });
+    } catch {}
+  });
+
+  [
+    '[role="breadcrumb"]',
+    '[aria-label*="breadcrumb"]',
+    '[class*="breadcrumb"]',
+    'nav[class*="crumb"]'
+  ].forEach((sel) => {
+    try { document.querySelectorAll(sel).forEach((el) => el.remove()); } catch {}
+  });
+
+  document.querySelectorAll(
+    '[rel="prev"], [rel="next"], [class*="prev-next"], [class*="pagination"]'
+  ).forEach((el) => el.remove());
+
   return document.documentElement.outerHTML;
 }
 
@@ -205,11 +252,16 @@ window.__scanToc = async function(maxDepth, maxExpandRounds) {
 
   function isHashOnlyLink(rawHref) {
     if (!rawHref) return false;
-    if (rawHref.startsWith("#")) return true;
+    if (rawHref.startsWith("#")) {
+      return !rawHref.startsWith("#/") && !rawHref.startsWith("#!/");
+    }
     try {
       var resolved = new URL(rawHref, window.location.href);
       var current = new URL(window.location.href);
-      return resolved.pathname === current.pathname && !!resolved.hash;
+      if (resolved.pathname === current.pathname && resolved.hash) {
+        return !resolved.hash.startsWith("#/") && !resolved.hash.startsWith("#!/");
+      }
+      return false;
     } catch (e) { return false; }
   }
 
@@ -230,7 +282,18 @@ window.__scanToc = async function(maxDepth, maxExpandRounds) {
         if (isHashOnlyLink(rawHref)) hashOnlyCount++;
       }
     }
-    if (validCount < 2) return null;
+    var spaMenuItemCount = 0;
+    if (validCount < 2) {
+      var listItems = el.querySelectorAll("li");
+      for (var li = 0; li < listItems.length; li++) {
+        var text = normalizeText(listItems[li].textContent);
+        if (text && text.length > 0 && text.length < 200 && !listItems[li].querySelector("ul, ol")) {
+          spaMenuItemCount++;
+        }
+      }
+      if (spaMenuItemCount < 5) return null;
+      validCount = spaMenuItemCount;
+    }
     return {
       element: el,
       left: rect.left, top: rect.top,
@@ -238,7 +301,8 @@ window.__scanToc = async function(maxDepth, maxExpandRounds) {
       centerX: rect.left + rect.width / 2,
       validLinkCount: validCount,
       hashOnlyCount: hashOnlyCount,
-      hashRatio: validCount > 0 ? hashOnlyCount / validCount : 0
+      hashRatio: validCount > 0 ? hashOnlyCount / validCount : 0,
+      isSpaMenu: spaMenuItemCount > 0
     };
   }
 
@@ -287,7 +351,7 @@ window.__scanToc = async function(maxDepth, maxExpandRounds) {
   }
 
   if (leftGroup.length === 0) {
-    var broadEls = document.querySelectorAll("div, section");
+    var broadEls = document.querySelectorAll("div, section, ul, ol, nav");
     for (var bi = 0; bi < broadEls.length; bi++) {
       var bel = broadEls[bi];
       if (seen.has(bel)) continue;
@@ -501,6 +565,90 @@ window.__scanToc = async function(maxDepth, maxExpandRounds) {
     return cleanTree(root.children);
   }
 
+  async function extractFromSpaMenu(containerEl) {
+    var originalHash = window.location.hash;
+    var clickLimit = 200;
+    var clickCount = 0;
+
+    async function processListForSpa(listEl, depth) {
+      if (depth > maxDepth) return [];
+      var results = [];
+      var lis = listEl.querySelectorAll(":scope > li");
+      for (var i = 0; i < lis.length && clickCount < clickLimit; i++) {
+        var nestedUls = lis[i].querySelectorAll(":scope > ul, :scope > ol");
+        var titleText = "";
+        var childNodes = lis[i].childNodes;
+        for (var cn = 0; cn < childNodes.length; cn++) {
+          var child = childNodes[cn];
+          if (child.nodeType === Node.TEXT_NODE) {
+            titleText += child.textContent || "";
+          } else if (child.tagName !== "UL" && child.tagName !== "OL") {
+            titleText += (child.textContent || "").trim() + " ";
+          }
+        }
+        titleText = normalizeText(titleText);
+        if (!titleText || titleText.length > 200) continue;
+
+        if (nestedUls.length > 0) {
+          var children = [];
+          for (var ni = 0; ni < nestedUls.length; ni++) {
+            var nested = await processListForSpa(nestedUls[ni], depth + 1);
+            for (var nc = 0; nc < nested.length; nc++) children.push(nested[nc]);
+          }
+          if (children.length > 0) {
+            results.push({ title: titleText, url: "", children: children });
+          }
+        } else {
+          var beforeHash = window.location.hash;
+          lis[i].click();
+          clickCount++;
+          await new Promise(function(r) { setTimeout(r, 100); });
+          var afterHash = window.location.hash;
+          if (afterHash !== beforeHash) {
+            var fullUrl = window.location.href.split("#")[0] + afterHash;
+            results.push({ title: titleText, url: fullUrl });
+            window.location.hash = originalHash;
+            await new Promise(function(r) { setTimeout(r, 100); });
+          } else {
+            var liClass = (lis[i].className || "").toString().toLowerCase();
+            if (liClass.indexOf("selected") >= 0 || liClass.indexOf("active") >= 0 || liClass.indexOf("current") >= 0) {
+              results.push({ title: titleText, url: window.location.href });
+            }
+          }
+        }
+      }
+      return results;
+    }
+
+    var topLists;
+    if (containerEl.tagName === "UL" || containerEl.tagName === "OL") {
+      topLists = [containerEl];
+    } else {
+      var allLists = containerEl.querySelectorAll("ul, ol");
+      topLists = [];
+      for (var tl = 0; tl < allLists.length; tl++) {
+        var isNested = false;
+        for (var tl2 = 0; tl2 < allLists.length; tl2++) {
+          if (allLists[tl2] !== allLists[tl] && allLists[tl2].contains(allLists[tl])) { isNested = true; break; }
+        }
+        if (!isNested) topLists.push(allLists[tl]);
+      }
+    }
+
+    var spaResults = [];
+    for (var l = 0; l < topLists.length; l++) {
+      var extracted = await processListForSpa(topLists[l], 0);
+      for (var ei = 0; ei < extracted.length; ei++) spaResults.push(extracted[ei]);
+    }
+
+    if (window.location.hash !== originalHash) {
+      window.location.hash = originalHash;
+      await new Promise(function(r) { setTimeout(r, 200); });
+    }
+
+    return spaResults;
+  }
+
   var items = [];
 
   if (sidebarEl.tagName === "UL" || sidebarEl.tagName === "OL") {
@@ -525,6 +673,10 @@ window.__scanToc = async function(maxDepth, maxExpandRounds) {
     items = extractFromLinks(sidebarEl);
   }
 
+  if (items.length === 0 && selected.isSpaMenu) {
+    items = await extractFromSpaMenu(sidebarEl);
+  }
+
   function countItems(arr) {
     var count = arr.length;
     for (var ci2 = 0; ci2 < arr.length; ci2++) {
@@ -543,6 +695,9 @@ window.__scanToc = async function(maxDepth, maxExpandRounds) {
 export function createPageController(): PageController {
   return {
     async load(options: PageLoadOptions): Promise<PageContent> {
+      const startTime = Date.now();
+      logger.debug({ url: options.url }, "page load started");
+
       const browserInstance = ensureBrowserInstance();
       const context = (await browserInstance.createContext({
         timeoutMs: options.timeoutMs,
@@ -560,12 +715,17 @@ export function createPageController(): PageController {
 
       await context.close();
 
+      logger.debug({ url: finalUrl, durationMs: Date.now() - startTime }, "page load completed");
+
       return {
         url: finalUrl,
         html
       };
     },
     async scanToc(options: TocScanOptions): Promise<TocScanResult> {
+      const startTime = Date.now();
+      logger.debug({ url: options.url, maxDepth: options.maxDepth }, "toc scan started");
+
       const browserInstance = ensureBrowserInstance();
       const context = (await browserInstance.createContext({
         timeoutMs: options.timeoutMs,
@@ -596,7 +756,10 @@ export function createPageController(): PageController {
 
       await context.close();
 
-      return result as TocScanResult;
+      const tocResult = result as TocScanResult;
+      logger.debug({ url: options.url, totalCount: tocResult.totalCount, durationMs: Date.now() - startTime }, "toc scan completed");
+
+      return tocResult;
     },
     async close(): Promise<void> {
     }

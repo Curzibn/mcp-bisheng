@@ -44,6 +44,19 @@ Renders a web page using a headless browser and returns the main content in Mark
 { "url": "https://example.com", "output_path": "/path/to/save/page.md" }
 ```
 
+### `scan_docs_toc`
+
+Scans the table of contents (TOC) structure from a documentation website and returns a structured tree of page titles and URLs. Supports both SPA sites (hash routing) and traditional multi-page sites. AI can use the result to batch-download pages and assemble a complete document.
+
+* **Parameters**:
+  * `url` (string, required): The documentation website URL. Only http/https are supported.
+  * `max_depth` (integer, optional): Maximum depth of the TOC tree to scan. Default is `10`.
+
+* **Example**:
+```json
+{ "url": "https://developer.work.weixin.qq.com/document/path/90664", "max_depth": 3 }
+```
+
 ### `install_chromium`
 
 Installs the Chromium browser required by Playwright. Use this tool if `read_url` fails due to a missing browser environment.
@@ -62,7 +75,7 @@ Add the following configuration to your `claude_desktop_config.json`:
   "mcpServers": {
     "bisheng": {
       "command": "npx",
-      "args": ["-y", "@curzbin/mcp-bisheng@0.1.3"]
+      "args": ["-y", "@curzbin/mcp-bisheng@0.2.0"]
     }
   }
 }
@@ -85,7 +98,7 @@ In Cursor, open “Settings → MCP Servers” (or the MCP configuration entry) 
   "mcpServers": {
     "bisheng": {
       "command": "npx",
-      "args": ["-y", "@curzbin/mcp-bisheng@0.1.3"]
+      "args": ["-y", "@curzbin/mcp-bisheng@0.2.0"]
     }
   }
 }
@@ -121,7 +134,7 @@ docker run --rm -i curzbin/mcp-bisheng:latest
 ### 4. CLI (Temporary Use)
 
 ```bash
-npx @curzbin/mcp-bisheng@0.1.3
+npx @curzbin/mcp-bisheng@0.2.0
 ```
 
 ## ⚙️ Configuration

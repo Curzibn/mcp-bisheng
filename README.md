@@ -44,6 +44,19 @@ BiSheng 向 MCP 客户端暴露以下工具：
 { "url": "https://example.com", "output_path": "d:\\output\\page.md" }
 ```
 
+### `scan_docs_toc`
+
+扫描文档网站的目录结构（TOC），返回包含标题和 URL 的结构化树。支持 SPA 单页应用（hash 路由）和传统多页站点。AI 可据此批量下载页面，组合为完整文档。
+
+* **参数**:
+  * `url` (string, required): 文档网站地址，仅支持 http/https。
+  * `max_depth` (integer, optional): 目录树最大扫描深度，默认 `10`。
+
+* **示例**:
+```json
+{ "url": "https://developer.work.weixin.qq.com/document/path/90664", "max_depth": 3 }
+```
+
 ### `install_chromium`
 
 安装 Playwright 所需的 Chromium 浏览器。当 `read_url` 因 Chromium 未安装而失败时，可先调用此工具再重试。
@@ -62,7 +75,7 @@ BiSheng 向 MCP 客户端暴露以下工具：
   "mcpServers": {
     "bisheng": {
       "command": "npx",
-      "args": ["-y", "@curzbin/mcp-bisheng@0.1.3"]
+      "args": ["-y", "@curzbin/mcp-bisheng@0.2.0"]
     }
   }
 }
@@ -85,7 +98,7 @@ Claude 会通过 MCP 调用 BiSheng，得到干净的 Markdown 文档后再继�
   "mcpServers": {
     "bisheng": {
       "command": "npx",
-      "args": ["-y", "@curzbin/mcp-bisheng@0.1.3"]
+      "args": ["-y", "@curzbin/mcp-bisheng@0.2.0"]
     }
   }
 }
@@ -121,7 +134,7 @@ docker run --rm -i curzbin/mcp-bisheng:latest
 ### 4. CLI 临时使用
 
 ```bash
-npx @curzbin/mcp-bisheng@0.1.3
+npx @curzbin/mcp-bisheng@0.2.0
 ```
 
 ## ⚙️ 配置 (Configuration)

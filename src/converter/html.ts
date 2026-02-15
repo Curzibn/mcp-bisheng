@@ -1,3 +1,5 @@
+import { logger } from "../utils/logger";
+
 export type HtmlArticle = {
   title: string | null;
   content: string;
@@ -38,8 +40,11 @@ export async function extractArticleFromHtml(html: string, url: string): Promise
   const article = reader.parse();
 
   if (!article || !article.content) {
+    logger.error({ url }, "article extraction failed: no content");
     throw new Error("Failed to extract article content");
   }
+
+  logger.debug({ url, title: article.title }, "article extracted");
 
   return {
     title: article.title ?? null,

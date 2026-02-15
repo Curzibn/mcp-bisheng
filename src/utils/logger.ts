@@ -1,42 +1,8 @@
+import pino from "pino";
+
 export type LogLevel = "debug" | "info" | "warn" | "error";
+export type Logger = pino.Logger;
 
-export type Logger = {
-  level: LogLevel;
-  debug: (message: string, meta?: unknown) => void;
-  info: (message: string, meta?: unknown) => void;
-  warn: (message: string, meta?: unknown) => void;
-  error: (message: string, meta?: unknown) => void;
-};
+const level = (process.env.LOG_LEVEL ?? "info") as LogLevel;
 
-export type LoggerOptions = {
-  level?: LogLevel;
-};
-
-function createNoopLogger(level: LogLevel): Logger {
-  const log = (value: unknown) => {
-    return value;
-  };
-
-  return {
-    level,
-    debug: () => {
-      log(null);
-    },
-    info: () => {
-      log(null);
-    },
-    warn: () => {
-      log(null);
-    },
-    error: () => {
-      log(null);
-    }
-  };
-}
-
-export function createLogger(options?: LoggerOptions): Logger {
-  const level = options?.level ?? "info";
-
-  return createNoopLogger(level);
-}
-
+export const logger: Logger = pino({ level }, pino.destination(2));

@@ -1,4 +1,5 @@
 import type { Browser, BrowserContext, Route } from "playwright";
+import { logger } from "../utils/logger";
 
 export type BrowserContextOptions = {
   timeoutMs: number;
@@ -37,12 +38,14 @@ async function configureRoutes(context: BrowserContext, options: BrowserContextO
     const url = request.url();
 
     if (!isHttpProtocol(url)) {
+      logger.debug({ url }, "route blocked: non-http protocol");
       route.abort();
       return;
     }
 
     if (resourceType === "image") {
       if (imageCount >= options.maxImageResources) {
+        logger.debug({ url, limit: options.maxImageResources }, "route blocked: image limit reached");
         route.abort();
         return;
       }
@@ -60,6 +63,7 @@ function createDefaultBrowserInstance(): BrowserInstance {
 
   const ensureBrowser = async (): Promise<Browser> => {
     if (!browserPromise) {
+      logger.info("launching chromium browser");
       const { chromium } = await import("playwright");
       browserPromise = chromium.launch({
         headless: true
@@ -75,6 +79,7 @@ function createDefaultBrowserInstance(): BrowserInstance {
       context.setDefaultTimeout(options.timeoutMs);
       context.setDefaultNavigationTimeout(options.timeoutMs);
       await configureRoutes(context, options);
+      logger.debug({ timeoutMs: options.timeoutMs, maxImageResources: options.maxImageResources }, "browser context created");
       return context;
     },
     async close(): Promise<void> {
@@ -84,6 +89,7 @@ function createDefaultBrowserInstance(): BrowserInstance {
       const browser = await browserPromise;
       await browser.close();
       browserPromise = null;
+      logger.info("browser closed");
     }
   };
 }

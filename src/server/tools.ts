@@ -7,6 +7,7 @@ import { AppConfig } from "../config";
 import { createPageController } from "../browser/page";
 import { extractArticleFromHtml } from "../converter/html";
 import { convertArticleToMarkdown } from "../converter/markdown";
+import { logger } from "../utils/logger";
 
 const readUrlInputSchema = z.object({
   url: z
@@ -82,15 +83,20 @@ export function createTools(server: McpServer, config: AppConfig): void {
       inputSchema: readUrlInputSchema
     },
     async (args) => {
+      const startTime = Date.now();
       const url = new URL(args.url);
 
       if (url.protocol !== "http:" && url.protocol !== "https:") {
+        logger.warn({ url: args.url, protocol: url.protocol }, "read_url rejected: invalid protocol");
         throw new Error("Only http and https protocols are allowed");
       }
 
       if (isPrivateHost(url)) {
+        logger.warn({ url: args.url, host: url.hostname }, "read_url rejected: private host");
         throw new Error("Access to private network addresses is not allowed");
       }
+
+      logger.info({ url: args.url }, "read_url started");
 
       const controller = createPageController();
       let pageContent;
@@ -102,10 +108,12 @@ export function createTools(server: McpServer, config: AppConfig): void {
         });
       } catch (err) {
         if (isChromiumMissingError(err)) {
+          logger.error({ url: args.url, err }, "read_url failed: chromium not installed");
           throw new Error(
             "Chromium is not installed. Please call the install_chromium tool to install Chromium first, then retry read_url."
           );
         }
+        logger.error({ url: args.url, err, durationMs: Date.now() - startTime }, "read_url failed");
         throw err;
       }
 
@@ -120,6 +128,9 @@ export function createTools(server: McpServer, config: AppConfig): void {
         fs.writeFileSync(out, markdownResult.markdown, "utf-8");
         savedPath = out;
       }
+
+      const durationMs = Date.now() - startTime;
+      logger.info({ url: args.url, savedPath, durationMs }, "read_url completed");
 
       const header = savedPath ? `Saved to ${savedPath}\n\n` : "";
       const text = `${header}${markdownResult.markdown}`;
@@ -144,11 +155,13 @@ export function createTools(server: McpServer, config: AppConfig): void {
     },
     async (args) => {
       const cmd = args.with_deps ? "npx playwright install --with-deps chromium" : "npx playwright install chromium";
+      logger.info({ withDeps: args.with_deps }, "install_chromium started");
       try {
         const output = execSync(cmd, {
           encoding: "utf-8",
           stdio: ["inherit", "pipe", "pipe"]
         });
+        logger.info("install_chromium completed");
         const text = output ? `Chromium installed successfully.\n\n${output}` : "Chromium installed successfully.";
         return {
           content: [{ type: "text" as const, text }]
@@ -157,6 +170,7 @@ export function createTools(server: McpServer, config: AppConfig): void {
         const stderr = err && typeof err === "object" && "stderr" in err ? String((err as { stderr?: unknown }).stderr) : "";
         const stdout = err && typeof err === "object" && "stdout" in err ? String((err as { stdout?: unknown }).stdout) : "";
         const msg = err instanceof Error ? err.message : String(err);
+        logger.error({ err, stderr }, "install_chromium failed");
         const text = `Chromium installation failed: ${msg}${stderr ? `\n\nstderr:\n${stderr}` : ""}${stdout ? `\n\nstdout:\n${stdout}` : ""}`;
         return {
           content: [{ type: "text" as const, text }]
@@ -173,15 +187,20 @@ export function createTools(server: McpServer, config: AppConfig): void {
       inputSchema: scanDocsTocInputSchema
     },
     async (args) => {
+      const startTime = Date.now();
       const url = new URL(args.url);
 
       if (url.protocol !== "http:" && url.protocol !== "https:") {
+        logger.warn({ url: args.url, protocol: url.protocol }, "scan_docs_toc rejected: invalid protocol");
         throw new Error("Only http and https protocols are allowed");
       }
 
       if (isPrivateHost(url)) {
+        logger.warn({ url: args.url, host: url.hostname }, "scan_docs_toc rejected: private host");
         throw new Error("Access to private network addresses is not allowed");
       }
+
+      logger.info({ url: args.url, maxDepth: args.max_depth }, "scan_docs_toc started");
 
       const controller = createPageController();
       let tocResult;
@@ -194,12 +213,17 @@ export function createTools(server: McpServer, config: AppConfig): void {
         });
       } catch (err) {
         if (isChromiumMissingError(err)) {
+          logger.error({ url: args.url, err }, "scan_docs_toc failed: chromium not installed");
           throw new Error(
             "Chromium is not installed. Please call the install_chromium tool to install Chromium first, then retry scan_docs_toc."
           );
         }
+        logger.error({ url: args.url, err, durationMs: Date.now() - startTime }, "scan_docs_toc failed");
         throw err;
       }
+
+      const durationMs = Date.now() - startTime;
+      logger.info({ url: args.url, totalCount: tocResult.totalCount, durationMs }, "scan_docs_toc completed");
 
       const resultJson = JSON.stringify(tocResult, null, 2);
       const text = `Found ${tocResult.totalCount} documentation pages:\n\n${resultJson}`;

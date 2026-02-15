@@ -4,6 +4,7 @@ import { z } from "zod";
 import fs from "fs";
 import path from "path";
 import { execSync } from "child_process";
+import pino from "pino";
 
 //#region src/config.ts
 const configSchema = z.object({
@@ -21,6 +22,11 @@ function getConfig() {
 }
 
 //#endregion
+//#region src/utils/logger.ts
+const level = process.env.LOG_LEVEL ?? "info";
+const logger = pino({ level }, pino.destination(2));
+
+//#endregion
 //#region src/browser/engine.ts
 let browserInstance = null;
 function isHttpProtocol(url) {
@@ -31,12 +37,18 @@ async function configureRoutes(context, options) {
 	await context.route("**/*", (route) => {
 		const request = route.request();
 		const resourceType = request.resourceType();
-		if (!isHttpProtocol(request.url())) {
+		const url = request.url();
+		if (!isHttpProtocol(url)) {
+			logger.debug({ url }, "route blocked: non-http protocol");
 			route.abort();
 			return;
 		}
 		if (resourceType === "image") {
 			if (imageCount >= options.maxImageResources) {
+				logger.debug({
+					url,
+					limit: options.maxImageResources
+				}, "route blocked: image limit reached");
 				route.abort();
 				return;
 			}
@@ -51,6 +63,7 @@ function createDefaultBrowserInstance() {
 	let browserPromise = null;
 	const ensureBrowser = async () => {
 		if (!browserPromise) {
+			logger.info("launching chromium browser");
 			const { chromium } = await import("playwright");
 			browserPromise = chromium.launch({ headless: true });
 		}
@@ -62,12 +75,17 @@ function createDefaultBrowserInstance() {
 			context.setDefaultTimeout(options.timeoutMs);
 			context.setDefaultNavigationTimeout(options.timeoutMs);
 			await configureRoutes(context, options);
+			logger.debug({
+				timeoutMs: options.timeoutMs,
+				maxImageResources: options.maxImageResources
+			}, "browser context created");
 			return context;
 		},
 		async close() {
 			if (!browserPromise) return;
 			await (await browserPromise).close();
 			browserPromise = null;
+			logger.info("browser closed");
 		}
 	};
 }
@@ -118,11 +136,13 @@ function removeHiddenNodesAndGetHTML() {
 		header.outerHTML = header.outerHTML;
 	});
 	document.body?.querySelectorAll("pre, code").forEach((codeElement) => {
+		codeElement.querySelectorAll("[class*=\"line-number\"], [class*=\"linenumber\"], [class*=\"line-num\"], [class*=\"lineNum\"], [class*=\"lineNo\"], [class*=\"line-no\"], [data-line-number]").forEach((el) => el.remove());
 		const walker = document.createTreeWalker(codeElement, NodeFilter.SHOW_TEXT, null);
 		let node;
 		while (node = walker.nextNode()) if (node.textContent) {
 			const cleanedLines = node.textContent.split("\n").map((line) => {
-				if (line.trimStart().match(/^(\d+)[\s\t]*(.*)$/)) return line.replace(/^\s*\d+[\s\t]*/, "");
+				const match = line.trimStart().match(/^(\d+)(\t| {2,})(.+)$/);
+				if (match) return (line.match(/^(\s*)/)?.[1] || "") + match[3];
 				return line;
 			});
 			node.textContent = cleanedLines.join("\n");
@@ -142,11 +162,519 @@ function removeHiddenNodesAndGetHTML() {
 	}
 	const href = baseEl.getAttribute("href");
 	if (!href || !href.startsWith(window.location.origin)) baseEl.setAttribute("href", window.location.href);
+	const sidebarVw = window.innerWidth;
+	const sidebarVh = window.innerHeight;
+	const sidebarSelectors = [
+		"nav",
+		"aside",
+		"[role=\"navigation\"]",
+		"[role=\"menu\"]",
+		"[role=\"menubar\"]",
+		"[class*=\"sidebar\"]",
+		"[class*=\"sidenav\"]",
+		"[class*=\"side-nav\"]",
+		"[class*=\"side_nav\"]",
+		"[class*=\"sideNav\"]",
+		"[class*=\"menu\"]",
+		"[class*=\"toc\"]",
+		"[class*=\"catalog\"]"
+	];
+	const sidebarSeen = /* @__PURE__ */ new Set();
+	sidebarSelectors.forEach((sel) => {
+		try {
+			document.querySelectorAll(sel).forEach((el) => {
+				if (sidebarSeen.has(el)) return;
+				sidebarSeen.add(el);
+				const rect = el.getBoundingClientRect();
+				if (!rect || rect.width === 0 || rect.height === 0) return;
+				const isTall = rect.height > sidebarVh * .3;
+				const isNarrow = rect.width < sidebarVw * .4;
+				const centerX = rect.left + rect.width / 2;
+				const isOnSide = centerX < sidebarVw * .3 || centerX > sidebarVw * .7;
+				if (isTall && isNarrow && isOnSide) el.remove();
+			});
+		} catch {}
+	});
+	[
+		"[role=\"breadcrumb\"]",
+		"[aria-label*=\"breadcrumb\"]",
+		"[class*=\"breadcrumb\"]",
+		"nav[class*=\"crumb\"]"
+	].forEach((sel) => {
+		try {
+			document.querySelectorAll(sel).forEach((el) => el.remove());
+		} catch {}
+	});
+	document.querySelectorAll("[rel=\"prev\"], [rel=\"next\"], [class*=\"prev-next\"], [class*=\"pagination\"]").forEach((el) => el.remove());
 	return document.documentElement.outerHTML;
 }
+const TOC_SCAN_SCRIPT = `
+window.__scanToc = async function(maxDepth, maxExpandRounds) {
+  var vw = window.innerWidth;
+  var vh = window.innerHeight;
+
+  function resolveUrl(href) {
+    if (!href) return "";
+    try {
+      if (href.startsWith("#")) return window.location.href.split("#")[0] + href;
+      var url = new URL(href, window.location.href);
+      if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+      if (url.hostname !== window.location.hostname) return "";
+      return url.href;
+    } catch (e) { return ""; }
+  }
+
+  function isValidLink(href) {
+    if (!href || href.startsWith("javascript:") || href.startsWith("mailto:")) return false;
+    return resolveUrl(href).length > 0;
+  }
+
+  function isHashOnlyLink(rawHref) {
+    if (!rawHref) return false;
+    if (rawHref.startsWith("#")) {
+      return !rawHref.startsWith("#/") && !rawHref.startsWith("#!/");
+    }
+    try {
+      var resolved = new URL(rawHref, window.location.href);
+      var current = new URL(window.location.href);
+      if (resolved.pathname === current.pathname && resolved.hash) {
+        return !resolved.hash.startsWith("#/") && !resolved.hash.startsWith("#!/");
+      }
+      return false;
+    } catch (e) { return false; }
+  }
+
+  function normalizeText(text) {
+    return (text || "").replace(/\\s+/g, " ").trim();
+  }
+
+  function analyzeElement(el) {
+    var rect = el.getBoundingClientRect();
+    if (!rect || rect.width < 50 || rect.height < 80) return null;
+    var links = el.querySelectorAll("a[href]");
+    var validCount = 0;
+    var hashOnlyCount = 0;
+    for (var i = 0; i < links.length; i++) {
+      var rawHref = links[i].getAttribute("href") || "";
+      if (isValidLink(links[i].href || rawHref)) {
+        validCount++;
+        if (isHashOnlyLink(rawHref)) hashOnlyCount++;
+      }
+    }
+    var spaMenuItemCount = 0;
+    if (validCount < 2) {
+      var listItems = el.querySelectorAll("li");
+      for (var li = 0; li < listItems.length; li++) {
+        var text = normalizeText(listItems[li].textContent);
+        if (text && text.length > 0 && text.length < 200 && !listItems[li].querySelector("ul, ol")) {
+          spaMenuItemCount++;
+        }
+      }
+      if (spaMenuItemCount < 5) return null;
+      validCount = spaMenuItemCount;
+    }
+    return {
+      element: el,
+      left: rect.left, top: rect.top,
+      width: rect.width, height: rect.height,
+      centerX: rect.left + rect.width / 2,
+      validLinkCount: validCount,
+      hashOnlyCount: hashOnlyCount,
+      hashRatio: validCount > 0 ? hashOnlyCount / validCount : 0,
+      isSpaMenu: spaMenuItemCount > 0
+    };
+  }
+
+  var SIDEBAR_SELECTORS = [
+    "nav", "aside",
+    "[role='navigation']", "[role='menu']", "[role='menubar']",
+    "[class*='sidebar']", "[class*='sidenav']", "[class*='side-nav']",
+    "[class*='side_nav']", "[class*='sideNav']",
+    "[class*='nav-']", "[class*='menu']",
+    "[class*='toc']", "[class*='catalog']",
+    "[class*='tree']", "[class*='directory']",
+    "[class*='panel']", "[class*='drawer']",
+    "[id*='sidebar']", "[id*='sidenav']",
+    "[id*='nav']", "[id*='menu']", "[id*='toc']"
+  ];
+
+  var seen = new Set();
+  var candidates = [];
+
+  for (var s = 0; s < SIDEBAR_SELECTORS.length; s++) {
+    try {
+      var elements = document.querySelectorAll(SIDEBAR_SELECTORS[s]);
+      for (var e = 0; e < elements.length; e++) {
+        if (seen.has(elements[e])) continue;
+        seen.add(elements[e]);
+        var info = analyzeElement(elements[e]);
+        if (info) candidates.push(info);
+      }
+    } catch (ex) {}
+  }
+
+  var leftGroup = [];
+  var rightGroup = [];
+  var otherGroup = [];
+
+  for (var ci = 0; ci < candidates.length; ci++) {
+    var c = candidates[ci];
+    if (!c) continue;
+    if (c.centerX < vw * 0.35 && c.height > vh * 0.3) {
+      leftGroup.push(c);
+    } else if (c.centerX > vw * 0.65) {
+      rightGroup.push(c);
+    } else {
+      otherGroup.push(c);
+    }
+  }
+
+  if (leftGroup.length === 0) {
+    var broadEls = document.querySelectorAll("div, section, ul, ol, nav");
+    for (var bi = 0; bi < broadEls.length; bi++) {
+      var bel = broadEls[bi];
+      if (seen.has(bel)) continue;
+      var brect = bel.getBoundingClientRect();
+      if (brect.left > 50 || brect.width < 100 || brect.width > vw * 0.4 || brect.height < vh * 0.3) continue;
+      var binfo = analyzeElement(bel);
+      if (!binfo || binfo.validLinkCount < 5) continue;
+      var overlaps = false;
+      for (var oi = 0; oi < candidates.length; oi++) {
+        if (!candidates[oi]) continue;
+        if (candidates[oi].element.contains(bel) || bel.contains(candidates[oi].element)) { overlaps = true; break; }
+      }
+      if (!overlaps) {
+        leftGroup.push(binfo);
+        candidates.push(binfo);
+      }
+    }
+  }
+
+  function selectBest(group) {
+    if (group.length === 0) return null;
+    if (group.length === 1) return group[0];
+    var filtered = group.filter(function(gc) {
+      for (var gi = 0; gi < group.length; gi++) {
+        var other = group[gi];
+        if (gc.element !== other.element &&
+          gc.element.contains(other.element) &&
+          other.validLinkCount >= gc.validLinkCount * 0.7) {
+          return false;
+        }
+      }
+      return true;
+    });
+    var pool = filtered.length > 0 ? filtered : group;
+    pool.sort(function(a, b) { return b.validLinkCount - a.validLinkCount; });
+    return pool[0];
+  }
+
+  var selected = selectBest(leftGroup);
+  var side = "left";
+
+  if (!selected) {
+    var nonHash = otherGroup.filter(function(oc) { return oc.hashRatio < 0.5; });
+    selected = selectBest(nonHash.length > 0 ? nonHash : otherGroup);
+    side = "other";
+  }
+
+  if (!selected) {
+    var nonHash2 = rightGroup.filter(function(rc) { return rc.hashRatio < 0.5; });
+    selected = selectBest(nonHash2.length > 0 ? nonHash2 : rightGroup);
+    side = "right";
+  }
+
+  if (!selected && candidates.length > 0) {
+    var validCands = candidates.filter(Boolean);
+    validCands.sort(function(a, b) { return b.validLinkCount - a.validLinkCount; });
+    if (validCands.length > 0) {
+      selected = validCands[0];
+      side = "fallback";
+    }
+  }
+
+  function buildDebug(sideVal, selectedInfo) {
+    return {
+      sidebarSide: sideVal,
+      candidateCount: candidates.filter(Boolean).length,
+      leftGroupCount: leftGroup.length,
+      rightGroupCount: rightGroup.length,
+      selectedLinkCount: selectedInfo ? selectedInfo.validLinkCount : 0,
+      expandRounds: 0,
+      containerInfos: candidates.filter(Boolean).map(function(cc) {
+        var pos = "other";
+        if (cc.centerX < vw * 0.35 && cc.height > vh * 0.3) pos = "left";
+        else if (cc.centerX > vw * 0.65) pos = "right";
+        return {
+          tagName: cc.element.tagName,
+          className: (cc.element.className || "").toString().substring(0, 100),
+          position: pos,
+          left: Math.round(cc.left),
+          top: Math.round(cc.top),
+          width: Math.round(cc.width),
+          height: Math.round(cc.height),
+          linkCount: cc.validLinkCount,
+          hashRatio: Math.round(cc.hashRatio * 100) / 100
+        };
+      })
+    };
+  }
+
+  if (!selected) {
+    return { items: [], totalCount: 0, debug: buildDebug("none", null) };
+  }
+
+  var sidebarEl = selected.element;
+
+  var expandRounds = 0;
+  for (var round = 0; round < maxExpandRounds; round++) {
+    var expandedCount = 0;
+    var ariaEls = sidebarEl.querySelectorAll('[aria-expanded="false"]');
+    for (var ai = 0; ai < ariaEls.length; ai++) {
+      ariaEls[ai].click();
+      expandedCount++;
+    }
+    var detailEls = sidebarEl.querySelectorAll("details:not([open])");
+    for (var di = 0; di < detailEls.length; di++) {
+      detailEls[di].setAttribute("open", "");
+      expandedCount++;
+    }
+    if (expandedCount === 0) break;
+    expandRounds++;
+    await new Promise(function(r) { setTimeout(r, 500); });
+  }
+
+  function findDirectLink(li) {
+    var nestedLists = new Set(li.querySelectorAll(":scope > ul, :scope > ol"));
+    var allLinks = li.querySelectorAll("a[href]");
+    for (var ai2 = 0; ai2 < allLinks.length; ai2++) {
+      var inNested = false;
+      nestedLists.forEach(function(nl) {
+        if (nl.contains(allLinks[ai2])) inNested = true;
+      });
+      if (!inNested) return allLinks[ai2];
+    }
+    return null;
+  }
+
+  function extractFromList(listEl, depth) {
+    if (depth > maxDepth) return [];
+    var items = [];
+    var lis = listEl.querySelectorAll(":scope > li");
+    for (var li = 0; li < lis.length; li++) {
+      var children = [];
+      var nestedUls = lis[li].querySelectorAll(":scope > ul, :scope > ol");
+      for (var ni = 0; ni < nestedUls.length; ni++) {
+        var nested = extractFromList(nestedUls[ni], depth + 1);
+        for (var nc = 0; nc < nested.length; nc++) children.push(nested[nc]);
+      }
+      var link = findDirectLink(lis[li]);
+      if (link) {
+        var rawHref = link.getAttribute("href") || "";
+        if (!isValidLink(link.href || rawHref)) continue;
+        var title = normalizeText(link.textContent);
+        if (!title) continue;
+        var resolved = resolveUrl(link.href || rawHref);
+        if (!resolved) continue;
+        items.push({ title: title, url: resolved, children: children.length > 0 ? children : undefined });
+      } else if (children.length > 0) {
+        var titleText = "";
+        var childNodes = lis[li].childNodes;
+        for (var cn = 0; cn < childNodes.length; cn++) {
+          var child = childNodes[cn];
+          if (child.nodeType === Node.TEXT_NODE) {
+            titleText += child.textContent || "";
+          } else if (child.tagName !== "UL" && child.tagName !== "OL") {
+            titleText += (child.textContent || "").trim() + " ";
+          }
+        }
+        var groupTitle = normalizeText(titleText);
+        if (groupTitle) {
+          items.push({ title: groupTitle, url: "", children: children });
+        } else {
+          for (var gc2 = 0; gc2 < children.length; gc2++) items.push(children[gc2]);
+        }
+      }
+    }
+    return items;
+  }
+
+  function extractFromLinks(containerEl) {
+    var links = containerEl.querySelectorAll("a[href]");
+    if (links.length === 0) return [];
+    var containerRect = containerEl.getBoundingClientRect();
+    var flatItems = [];
+    for (var fi = 0; fi < links.length; fi++) {
+      var rawHref = links[fi].getAttribute("href") || "";
+      if (!isValidLink(links[fi].href || rawHref)) continue;
+      var title = normalizeText(links[fi].textContent);
+      if (!title || title.length > 200) continue;
+      var resolved = resolveUrl(links[fi].href || rawHref);
+      if (!resolved) continue;
+      var linkRect = links[fi].getBoundingClientRect();
+      flatItems.push({ title: title, url: resolved, indent: Math.max(0, linkRect.left - containerRect.left), depth: 0 });
+    }
+    if (flatItems.length === 0) return [];
+
+    var indentSet = new Set(flatItems.map(function(it) { return Math.round(it.indent); }));
+    var sortedIndents = Array.from(indentSet).sort(function(a, b) { return a - b; });
+    var indentToLevel = {};
+    sortedIndents.forEach(function(val, idx) { indentToLevel[val] = idx; });
+    for (var fi2 = 0; fi2 < flatItems.length; fi2++) {
+      flatItems[fi2].depth = Math.min(indentToLevel[Math.round(flatItems[fi2].indent)] || 0, maxDepth);
+    }
+
+    var root = { children: [], depth: -1 };
+    var stack = [root];
+    for (var fi3 = 0; fi3 < flatItems.length; fi3++) {
+      var item = flatItems[fi3];
+      while (stack.length > 1 && stack[stack.length - 1].depth >= item.depth) stack.pop();
+      var node = { title: item.title, url: item.url, children: [] };
+      stack[stack.length - 1].children.push(node);
+      stack.push({ children: node.children, depth: item.depth });
+    }
+
+    function cleanTree(nodes) {
+      return nodes.map(function(n) {
+        var cleaned = { title: n.title, url: n.url };
+        if (n.children && n.children.length > 0) cleaned.children = cleanTree(n.children);
+        return cleaned;
+      });
+    }
+    return cleanTree(root.children);
+  }
+
+  async function extractFromSpaMenu(containerEl) {
+    var originalHash = window.location.hash;
+    var clickLimit = 200;
+    var clickCount = 0;
+
+    async function processListForSpa(listEl, depth) {
+      if (depth > maxDepth) return [];
+      var results = [];
+      var lis = listEl.querySelectorAll(":scope > li");
+      for (var i = 0; i < lis.length && clickCount < clickLimit; i++) {
+        var nestedUls = lis[i].querySelectorAll(":scope > ul, :scope > ol");
+        var titleText = "";
+        var childNodes = lis[i].childNodes;
+        for (var cn = 0; cn < childNodes.length; cn++) {
+          var child = childNodes[cn];
+          if (child.nodeType === Node.TEXT_NODE) {
+            titleText += child.textContent || "";
+          } else if (child.tagName !== "UL" && child.tagName !== "OL") {
+            titleText += (child.textContent || "").trim() + " ";
+          }
+        }
+        titleText = normalizeText(titleText);
+        if (!titleText || titleText.length > 200) continue;
+
+        if (nestedUls.length > 0) {
+          var children = [];
+          for (var ni = 0; ni < nestedUls.length; ni++) {
+            var nested = await processListForSpa(nestedUls[ni], depth + 1);
+            for (var nc = 0; nc < nested.length; nc++) children.push(nested[nc]);
+          }
+          if (children.length > 0) {
+            results.push({ title: titleText, url: "", children: children });
+          }
+        } else {
+          var beforeHash = window.location.hash;
+          lis[i].click();
+          clickCount++;
+          await new Promise(function(r) { setTimeout(r, 100); });
+          var afterHash = window.location.hash;
+          if (afterHash !== beforeHash) {
+            var fullUrl = window.location.href.split("#")[0] + afterHash;
+            results.push({ title: titleText, url: fullUrl });
+            window.location.hash = originalHash;
+            await new Promise(function(r) { setTimeout(r, 100); });
+          } else {
+            var liClass = (lis[i].className || "").toString().toLowerCase();
+            if (liClass.indexOf("selected") >= 0 || liClass.indexOf("active") >= 0 || liClass.indexOf("current") >= 0) {
+              results.push({ title: titleText, url: window.location.href });
+            }
+          }
+        }
+      }
+      return results;
+    }
+
+    var topLists;
+    if (containerEl.tagName === "UL" || containerEl.tagName === "OL") {
+      topLists = [containerEl];
+    } else {
+      var allLists = containerEl.querySelectorAll("ul, ol");
+      topLists = [];
+      for (var tl = 0; tl < allLists.length; tl++) {
+        var isNested = false;
+        for (var tl2 = 0; tl2 < allLists.length; tl2++) {
+          if (allLists[tl2] !== allLists[tl] && allLists[tl2].contains(allLists[tl])) { isNested = true; break; }
+        }
+        if (!isNested) topLists.push(allLists[tl]);
+      }
+    }
+
+    var spaResults = [];
+    for (var l = 0; l < topLists.length; l++) {
+      var extracted = await processListForSpa(topLists[l], 0);
+      for (var ei = 0; ei < extracted.length; ei++) spaResults.push(extracted[ei]);
+    }
+
+    if (window.location.hash !== originalHash) {
+      window.location.hash = originalHash;
+      await new Promise(function(r) { setTimeout(r, 200); });
+    }
+
+    return spaResults;
+  }
+
+  var items = [];
+
+  if (sidebarEl.tagName === "UL" || sidebarEl.tagName === "OL") {
+    items = extractFromList(sidebarEl, 0);
+  } else {
+    var allLists = sidebarEl.querySelectorAll("ul, ol");
+    var topLevelLists = [];
+    for (var tl = 0; tl < allLists.length; tl++) {
+      var isNested = false;
+      for (var tl2 = 0; tl2 < allLists.length; tl2++) {
+        if (allLists[tl2] !== allLists[tl] && allLists[tl2].contains(allLists[tl])) { isNested = true; break; }
+      }
+      if (!isNested) topLevelLists.push(allLists[tl]);
+    }
+    for (var tl3 = 0; tl3 < topLevelLists.length; tl3++) {
+      var extracted = extractFromList(topLevelLists[tl3], 0);
+      for (var ei = 0; ei < extracted.length; ei++) items.push(extracted[ei]);
+    }
+  }
+
+  if (items.length === 0) {
+    items = extractFromLinks(sidebarEl);
+  }
+
+  if (items.length === 0 && selected.isSpaMenu) {
+    items = await extractFromSpaMenu(sidebarEl);
+  }
+
+  function countItems(arr) {
+    var count = arr.length;
+    for (var ci2 = 0; ci2 < arr.length; ci2++) {
+      if (arr[ci2].children) count += countItems(arr[ci2].children);
+    }
+    return count;
+  }
+
+  var debug = buildDebug(side, selected);
+  debug.expandRounds = expandRounds;
+
+  return { items: items, totalCount: countItems(items), debug: debug };
+};
+`;
 function createPageController() {
 	return {
 		async load(options) {
+			const startTime = Date.now();
+			logger.debug({ url: options.url }, "page load started");
 			const context = await ensureBrowserInstance().createContext({
 				timeoutMs: options.timeoutMs,
 				maxImageResources: options.maxImageResources
@@ -159,367 +687,48 @@ function createPageController() {
 			const html = await page.evaluate(removeHiddenNodesAndGetHTML);
 			const finalUrl = page.url();
 			await context.close();
+			logger.debug({
+				url: finalUrl,
+				durationMs: Date.now() - startTime
+			}, "page load completed");
 			return {
 				url: finalUrl,
 				html
 			};
 		},
 		async scanToc(options) {
+			const startTime = Date.now();
+			logger.debug({
+				url: options.url,
+				maxDepth: options.maxDepth
+			}, "toc scan started");
 			const context = await ensureBrowserInstance().createContext({
 				timeoutMs: options.timeoutMs,
 				maxImageResources: options.maxImageResources
 			});
 			const page = await context.newPage();
-			await page.addInitScript(`
-        window.__scanToc = function(maxDepth) {
-          function resolveUrl(href) {
-            if (!href) return "";
-            try {
-              if (href.startsWith("#")) {
-                return window.location.href.split("#")[0] + href;
-              }
-              const url = new URL(href, window.location.href);
-              if (url.protocol !== "http:" && url.protocol !== "https:") return "";
-              if (url.hostname !== window.location.hostname) return "";
-              return url.href;
-            } catch {
-              return "";
-            }
-          }
-
-          function isValidLink(href) {
-            if (!href) return false;
-            if (href.startsWith("javascript:")) return false;
-            if (href.startsWith("mailto:")) return false;
-            if (href.startsWith("#")) {
-              const resolved = resolveUrl(href);
-              return resolved.length > 0;
-            }
-            const resolved = resolveUrl(href);
-            return resolved.length > 0;
-          }
-
-          function extractTocFromList(listElement, depth) {
-            if (depth > maxDepth) return [];
-            const items = [];
-            const listItems = listElement.querySelectorAll(":scope > li");
-
-            for (const li of listItems) {
-              let link = li.querySelector(":scope > a");
-              if (!link) {
-                link = li.querySelector("a");
-              }
-              if (!link) continue;
-
-              const href = link.href || link.getAttribute("href") || "";
-              if (!isValidLink(href)) continue;
-
-              let title = link.textContent ? link.textContent.trim() : "";
-              if (!title) {
-                title = li.textContent ? li.textContent.trim() : "";
-                const linkInTitle = title.match(/^(.+?)(?:\s*\(.*?\))?$/);
-                if (linkInTitle) {
-                  title = linkInTitle[1].trim();
-                }
-              }
-              if (!title) continue;
-
-              const resolvedUrl = resolveUrl(href);
-              if (!resolvedUrl) continue;
-
-              const children = [];
-              const nestedList = li.querySelector(":scope > ul, :scope > ol");
-              if (nestedList) {
-                const nestedItems = extractTocFromList(nestedList, depth + 1);
-                children.push(...nestedItems);
-              }
-
-              items.push({
-                title: title,
-                url: resolvedUrl,
-                children: children.length > 0 ? children : undefined
-              });
-            }
-
-            return items;
-          }
-
-          function findAllTocContainers() {
-            const selectors = [
-              "nav",
-              "aside",
-              ".sidebar",
-              ".toc",
-              ".table-of-contents",
-              ".docs-sidebar",
-              ".nav-sidebar",
-              ".documentation-sidebar",
-              "[role='navigation']",
-              "[role='menu']",
-              "[class*='sidebar']",
-              "[class*='toc']",
-              "[class*='nav']",
-              "[class*='menu']"
-            ];
-
-            const candidates = [];
-
-            for (const selector of selectors) {
-              const elements = document.querySelectorAll(selector);
-              for (const element of elements) {
-                const links = element.querySelectorAll("a[href]");
-                let validLinkCount = 0;
-                for (const link of links) {
-                  const href = link.href || link.getAttribute("href") || "";
-                  if (isValidLink(href)) {
-                    validLinkCount++;
-                  }
-                }
-                if (validLinkCount >= 3) {
-                  candidates.push({ element: element, linkCount: validLinkCount });
-                }
-              }
-            }
-
-            const allLists = document.querySelectorAll("ul, ol");
-            for (const list of allLists) {
-              const links = list.querySelectorAll("a[href]");
-              let validLinkCount = 0;
-              for (const link of links) {
-                const href = link.href || link.getAttribute("href") || "";
-                if (isValidLink(href)) {
-                  validLinkCount++;
-                }
-              }
-              if (validLinkCount >= 3) {
-                let isContained = false;
-                for (const candidate of candidates) {
-                  if (candidate.element.contains(list) || list.contains(candidate.element)) {
-                    isContained = true;
-                    break;
-                  }
-                }
-                if (!isContained) {
-                  candidates.push({ element: list, linkCount: validLinkCount });
-                }
-              }
-            }
-
-            const uniqueCandidates = [];
-            const seenElements = new Set();
-            
-            for (const candidate of candidates) {
-              let isDuplicate = false;
-              for (const seen of seenElements) {
-                if (seen.contains(candidate.element) || candidate.element.contains(seen)) {
-                  isDuplicate = true;
-                  break;
-                }
-              }
-              if (!isDuplicate) {
-                uniqueCandidates.push(candidate.element);
-                seenElements.add(candidate.element);
-              }
-            }
-
-            return uniqueCandidates;
-          }
-
-          function normalizeTitle(title) {
-            return title.trim().toLowerCase().replace(/[^\w\u4e00-\u9fa5]/g, "");
-          }
-
-          function extractArticleHeadings() {
-            const articleSelectors = [
-              "main",
-              "article",
-              ".content",
-              ".main-content",
-              ".article-content",
-              ".post-content",
-              "[role='main']",
-              ".documentation-content",
-              ".docs-content"
-            ];
-
-            let articleContainer = null;
-            for (const selector of articleSelectors) {
-              const element = document.querySelector(selector);
-              if (element) {
-                articleContainer = element;
-                break;
-              }
-            }
-
-            if (!articleContainer) {
-              articleContainer = document.body;
-            }
-
-            const headings = articleContainer.querySelectorAll("h1, h2, h3, h4, h5, h6");
-            const headingTexts = [];
-            const seen = new Set();
-
-            for (const heading of headings) {
-              const text = heading.textContent ? heading.textContent.trim() : "";
-              if (text) {
-                const normalized = normalizeTitle(text);
-                if (normalized && !seen.has(normalized)) {
-                  seen.add(normalized);
-                  headingTexts.push(text);
-                }
-              }
-            }
-
-            return headingTexts;
-          }
-
-          function extractTocTitles(tocContainer) {
-            const titles = [];
-            const links = tocContainer.querySelectorAll("a[href]");
-
-            for (const link of links) {
-              const href = link.href || link.getAttribute("href") || "";
-              if (isValidLink(href)) {
-                const title = link.textContent ? link.textContent.trim() : "";
-                if (title) {
-                  titles.push(title);
-                }
-              }
-            }
-
-            return titles;
-          }
-
-          function calculateOverlap(tocTitles, articleHeadings) {
-            if (tocTitles.length === 0) return 0;
-
-            const normalizedArticleHeadings = new Set();
-            for (const heading of articleHeadings) {
-              normalizedArticleHeadings.add(normalizeTitle(heading));
-            }
-
-            let matchedCount = 0;
-            for (const tocTitle of tocTitles) {
-              const normalized = normalizeTitle(tocTitle);
-              if (normalizedArticleHeadings.has(normalized)) {
-                matchedCount++;
-              }
-            }
-
-            return matchedCount / tocTitles.length;
-          }
-
-          function countItems(tocItems) {
-            let count = tocItems.length;
-            for (const item of tocItems) {
-              if (item.children) {
-                count += countItems(item.children);
-              }
-            }
-            return count;
-          }
-
-          const containers = findAllTocContainers();
-          if (containers.length === 0) {
-            return { items: [], totalCount: 0, debug: { containersFound: 0, articleHeadings: [], containerInfos: [] } };
-          }
-
-          const articleHeadings = extractArticleHeadings();
-          const containerInfos = [];
-
-          for (const container of containers) {
-            const tocTitles = extractTocTitles(container);
-            const overlap = calculateOverlap(tocTitles, articleHeadings);
-            const linkCount = tocTitles.length;
-
-            containerInfos.push({
-              titles: tocTitles.slice(0, 20),
-              titleCount: tocTitles.length,
-              overlap: overlap,
-              hasOverlap: overlap > 0
-            });
-          }
-
-          let selectedContainer = null;
-          let selectedIndex = 0;
-
-          if (containers.length === 1) {
-            selectedContainer = containers[0];
-            selectedIndex = 0;
-          } else {
-            const containerScores = [];
-
-            for (let i = 0; i < containers.length; i++) {
-              const container = containers[i];
-              const info = containerInfos[i];
-              containerScores.push({
-                container: container,
-                index: i,
-                overlap: info.overlap,
-                linkCount: info.titleCount,
-                hasOverlap: info.hasOverlap
-              });
-            }
-
-            const containersWithOverlap = containerScores.filter(c => c.hasOverlap);
-
-            if (containersWithOverlap.length === 0) {
-              containerScores.sort((a, b) => b.linkCount - a.linkCount);
-              selectedContainer = containerScores[0].container;
-              selectedIndex = containerScores[0].index;
-            } else if (containersWithOverlap.length === 1) {
-              const containersWithoutOverlap = containerScores.filter(c => !c.hasOverlap);
-              if (containersWithoutOverlap.length > 0) {
-                containersWithoutOverlap.sort((a, b) => b.linkCount - a.linkCount);
-                selectedContainer = containersWithoutOverlap[0].container;
-                selectedIndex = containersWithoutOverlap[0].index;
-              } else {
-                selectedContainer = containersWithOverlap[0].container;
-                selectedIndex = containersWithOverlap[0].index;
-              }
-            } else {
-              containersWithOverlap.sort((a, b) => a.overlap - b.overlap);
-              selectedContainer = containersWithOverlap[0].container;
-              selectedIndex = containersWithOverlap[0].index;
-            }
-          }
-
-          let rootList = null;
-          if (selectedContainer.tagName.toLowerCase() === "ul" || selectedContainer.tagName.toLowerCase() === "ol") {
-            rootList = selectedContainer;
-          } else {
-            rootList = selectedContainer.querySelector("ul, ol");
-          }
-
-          if (!rootList) {
-            return { items: [], totalCount: 0 };
-          }
-
-          const items = extractTocFromList(rootList, 0);
-          const totalCount = countItems(items);
-
-          return {
-            items: items,
-            totalCount: totalCount,
-            debug: {
-              containersFound: containers.length,
-              selectedIndex: selectedIndex,
-              articleHeadings: articleHeadings.slice(0, 20),
-              articleHeadingCount: articleHeadings.length,
-              containerInfos: containerInfos
-            }
-          };
-        };
-      `);
+			await page.setViewportSize({
+				width: 1440,
+				height: 900
+			});
+			await page.addInitScript(TOC_SCAN_SCRIPT);
 			await page.goto(options.url, {
 				waitUntil: "networkidle",
 				timeout: options.timeoutMs
 			});
-			const result = await page.evaluate((maxDepth) => {
-				return window.__scanToc(maxDepth);
-			}, options.maxDepth || 10);
+			try {
+				await page.waitForSelector("nav, aside, [class*=\"sidebar\"], [class*=\"menu\"], [role=\"navigation\"]", { timeout: 3e3 });
+				await page.waitForTimeout(500);
+			} catch {}
+			const result = await page.evaluate(([md, mer]) => window.__scanToc(md, mer), [options.maxDepth || 10, 5]);
 			await context.close();
-			return result;
+			const tocResult = result;
+			logger.debug({
+				url: options.url,
+				totalCount: tocResult.totalCount,
+				durationMs: Date.now() - startTime
+			}, "toc scan completed");
+			return tocResult;
 		},
 		async close() {}
 	};
@@ -543,7 +752,14 @@ async function extractArticleFromHtml(html, url) {
 	ensureBaseElement(dom, url);
 	const document = dom.window.document;
 	const article = new Readability(document).parse();
-	if (!article || !article.content) throw new Error("Failed to extract article content");
+	if (!article || !article.content) {
+		logger.error({ url }, "article extraction failed: no content");
+		throw new Error("Failed to extract article content");
+	}
+	logger.debug({
+		url,
+		title: article.title
+	}, "article extracted");
 	return {
 		title: article.title ?? null,
 		content: article.content,
@@ -560,6 +776,7 @@ function validateUri(href, baseUri) {
 		new URL(href);
 		return href;
 	} catch {
+		if (href.startsWith("#")) return new URL(href, baseUri).href;
 		const base = new URL(baseUri);
 		if (href.startsWith("/")) return base.origin + href;
 		return base.href + (base.href.endsWith("/") ? "" : "/") + href;
@@ -578,11 +795,10 @@ function extractFormattedText(element) {
 		const lines = content.split("\n");
 		let hasLineNumbers = false;
 		const processedLines = lines.map((line) => {
-			const lineNumberMatch = line.trimStart().match(/^(\d+)([\s\t]+|)(.*)$/);
-			if (lineNumberMatch && lineNumberMatch[1]) {
+			const lineNumberMatch = line.trimStart().match(/^(\d+)(\t| {2,})(.+)$/);
+			if (lineNumberMatch) {
 				hasLineNumbers = true;
-				const codePart = lineNumberMatch[3] || "";
-				return (line.match(/^(\s*)/)?.[1] || "") + codePart;
+				return (line.match(/^(\s*)/)?.[1] || "") + lineNumberMatch[3];
 			}
 			return line;
 		});
@@ -591,11 +807,8 @@ function extractFormattedText(element) {
 	};
 	if (textContent.includes("\n") && textContent.split("\n").length > 3) return removeLineNumbers(textContent);
 	const lines = text.split("\n").map((line) => {
-		const lineNumberMatch = line.trimStart().match(/^(\d+)([\s\t]+|)(.*)$/);
-		if (lineNumberMatch && lineNumberMatch[1]) {
-			const codePart = lineNumberMatch[3] || "";
-			return (line.match(/^(\s*)/)?.[1] || "") + codePart.trimEnd();
-		}
+		const lineNumberMatch = line.trimStart().match(/^(\d+)(\t| {2,})(.+)$/);
+		if (lineNumberMatch) return (line.match(/^(\s*)/)?.[1] || "") + lineNumberMatch[3].trimEnd();
 		return line.trimEnd();
 	});
 	const formattedLines = [];
@@ -605,13 +818,10 @@ function extractFormattedText(element) {
 		else if (formattedLines.length > 0 && formattedLines[formattedLines.length - 1] !== "") formattedLines.push("");
 	}
 	let result = formattedLines.join("\n").replace(/\n+$/, "");
-	if (!result.includes("\n") && textContent && textContent.length > 50) {
-		const matches = Array.from(textContent.matchAll(/(\d+)[\s\t]*([^\d\n]+)/g));
-		if (matches.length > 1) result = matches.map((m) => m[2].trimStart()).join("\n");
-	}
 	result = removeLineNumbers(result);
 	return result.split("\n").map((line) => {
-		if (line.trimStart().match(/^\d+[\s\t]*/)) return line.replace(/^\s*\d+[\s\t]*/, "");
+		const m = line.trimStart().match(/^(\d+)(\t| {2,})(.+)$/);
+		if (m) return (line.match(/^(\s*)/)?.[1] || "") + m[3];
 		return line;
 	}).join("\n");
 }
@@ -630,8 +840,8 @@ function convertToFencedCodeBlock(node, options) {
 	while (match = fenceInCodeRegex.exec(code)) if (match[0].length >= fenceSize) fenceSize = match[0].length + 1;
 	const fence = repeat(fenceChar, fenceSize);
 	const cleanedCode = code.split("\n").map((line) => {
-		const lineNumberMatch = line.trimStart().match(/^(\d+)([\s\t]*)(.*)$/);
-		if (lineNumberMatch && lineNumberMatch[1]) return (line.match(/^(\s*)/)?.[1] || "") + (lineNumberMatch[3] || "");
+		const lineNumberMatch = line.trimStart().match(/^(\d+)(\t| {2,})(.+)$/);
+		if (lineNumberMatch) return (line.match(/^(\s*)/)?.[1] || "") + lineNumberMatch[3];
 		return line;
 	}).join("\n").replace(/\n+$/, "");
 	return "\n\n" + fence + language + "\n" + cleanedCode + "\n" + fence + "\n\n";
@@ -666,7 +876,9 @@ async function buildTurndownService(baseURI) {
 		},
 		replacement(_content, node) {
 			const el = node;
-			const resolved = validateUri(el.getAttribute("src") ?? "", baseURI);
+			const src = el.getAttribute("src") ?? "";
+			if (src.startsWith("data:")) return cleanAttribute(el.getAttribute("alt")) || "";
+			const resolved = validateUri(src, baseURI);
 			const alt = cleanAttribute(el.getAttribute("alt"));
 			const title = cleanAttribute(el.getAttribute("title"));
 			const titlePart = title ? ` "${title}"` : "";
@@ -707,10 +919,35 @@ async function buildTurndownService(baseURI) {
 	});
 	return service;
 }
+function isAnchorLinkList(block) {
+	const items = block.trim().split("\n").filter((l) => l.trim());
+	return items.length > 0 && items.every((item) => /\]\([^)]*#[^)]*\)/.test(item));
+}
+function cleanMarkdown(body, title) {
+	let result = body;
+	const headingMatch = result.match(/^(#{1,6})\s+(.+)/m);
+	if (headingMatch) {
+		if (headingMatch[2].trim() === title.trim()) result = result.replace(headingMatch[0], "").replace(/^\n+/, "");
+	}
+	result = result.replace(/\[]\([^)]*\)/g, "");
+	result = result.replace(/^!\[.*?\]\(.*?\)\s*$/gm, "");
+	const leadingMatch = result.match(/^((?:[-*+]|\d+\.)\s+\[.+?\]\([^)]*#[^)]*\)\s*\n?)+/);
+	if (leadingMatch && isAnchorLinkList(leadingMatch[0])) result = result.slice(leadingMatch[0].length).replace(/^\n+/, "");
+	const trailingMatch = result.match(/(?:\n{2,})((?:[-*+]|\d+\.)\s+\[.+?\]\([^)]*#[^)]*\)\s*\n?)+\s*$/);
+	if (trailingMatch && isAnchorLinkList(trailingMatch[0])) result = result.slice(0, result.length - trailingMatch[0].length);
+	result = result.replace(/\n+\[上一篇]\(.*?\)[\s\S]*$/m, "");
+	result = result.replace(/\n+\[Previous]\(.*?\)[\s\S]*$/im, "");
+	result = result.replace(/(\n\[.+?]\(.+?\))*\n.*?©.*$/s, "");
+	result = result.replace(/\n.*All Rights Reserved.*$/i, "");
+	result = result.replace(/\n{3,}/g, "\n\n");
+	return result.trim();
+}
 async function convertArticleToMarkdown(article) {
 	let body = (await buildTurndownService(article.url)).turndown(article.content);
 	body = stripSpecialChars(body);
-	return { markdown: `# ${article.title ?? "Untitled"}\n\n${body}`.trim() };
+	const title = article.title ?? "Untitled";
+	body = cleanMarkdown(body, title);
+	return { markdown: `# ${title}\n\n${body}`.trim() };
 }
 
 //#endregion
@@ -746,9 +983,23 @@ function createTools(server, config) {
 		description: "Use a headless browser to render a web page and return the main content as Markdown. When output_path is provided, also save the Markdown to that path on disk.",
 		inputSchema: readUrlInputSchema
 	}, async (args) => {
+		const startTime = Date.now();
 		const url = new URL(args.url);
-		if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Only http and https protocols are allowed");
-		if (isPrivateHost(url)) throw new Error("Access to private network addresses is not allowed");
+		if (url.protocol !== "http:" && url.protocol !== "https:") {
+			logger.warn({
+				url: args.url,
+				protocol: url.protocol
+			}, "read_url rejected: invalid protocol");
+			throw new Error("Only http and https protocols are allowed");
+		}
+		if (isPrivateHost(url)) {
+			logger.warn({
+				url: args.url,
+				host: url.hostname
+			}, "read_url rejected: private host");
+			throw new Error("Access to private network addresses is not allowed");
+		}
+		logger.info({ url: args.url }, "read_url started");
 		const controller = createPageController();
 		let pageContent;
 		try {
@@ -758,7 +1009,18 @@ function createTools(server, config) {
 				maxImageResources: config.maxImageResources
 			});
 		} catch (err) {
-			if (isChromiumMissingError(err)) throw new Error("Chromium is not installed. Please call the install_chromium tool to install Chromium first, then retry read_url.");
+			if (isChromiumMissingError(err)) {
+				logger.error({
+					url: args.url,
+					err
+				}, "read_url failed: chromium not installed");
+				throw new Error("Chromium is not installed. Please call the install_chromium tool to install Chromium first, then retry read_url.");
+			}
+			logger.error({
+				url: args.url,
+				err,
+				durationMs: Date.now() - startTime
+			}, "read_url failed");
 			throw err;
 		}
 		const markdownResult = await convertArticleToMarkdown(await extractArticleFromHtml(pageContent.html, pageContent.url));
@@ -769,6 +1031,12 @@ function createTools(server, config) {
 			fs.writeFileSync(out, markdownResult.markdown, "utf-8");
 			savedPath = out;
 		}
+		const durationMs = Date.now() - startTime;
+		logger.info({
+			url: args.url,
+			savedPath,
+			durationMs
+		}, "read_url completed");
 		return { content: [{
 			type: "text",
 			text: `${savedPath ? `Saved to ${savedPath}\n\n` : ""}${markdownResult.markdown}`
@@ -779,6 +1047,7 @@ function createTools(server, config) {
 		inputSchema: installChromiumInputSchema
 	}, async (args) => {
 		const cmd = args.with_deps ? "npx playwright install --with-deps chromium" : "npx playwright install chromium";
+		logger.info({ withDeps: args.with_deps }, "install_chromium started");
 		try {
 			const output = execSync(cmd, {
 				encoding: "utf-8",
@@ -788,6 +1057,7 @@ function createTools(server, config) {
 					"pipe"
 				]
 			});
+			logger.info("install_chromium completed");
 			return { content: [{
 				type: "text",
 				text: output ? `Chromium installed successfully.\n\n${output}` : "Chromium installed successfully."
@@ -795,9 +1065,14 @@ function createTools(server, config) {
 		} catch (err) {
 			const stderr = err && typeof err === "object" && "stderr" in err ? String(err.stderr) : "";
 			const stdout = err && typeof err === "object" && "stdout" in err ? String(err.stdout) : "";
+			const msg = err instanceof Error ? err.message : String(err);
+			logger.error({
+				err,
+				stderr
+			}, "install_chromium failed");
 			return { content: [{
 				type: "text",
-				text: `Chromium installation failed: ${err instanceof Error ? err.message : String(err)}${stderr ? `\n\nstderr:\n${stderr}` : ""}${stdout ? `\n\nstdout:\n${stdout}` : ""}`
+				text: `Chromium installation failed: ${msg}${stderr ? `\n\nstderr:\n${stderr}` : ""}${stdout ? `\n\nstdout:\n${stdout}` : ""}`
 			}] };
 		}
 	});
@@ -805,9 +1080,26 @@ function createTools(server, config) {
 		description: "Scan the table of contents (TOC) structure from a documentation website. Returns a structured tree of all documentation pages with their titles and URLs. AI can use this to download multiple pages and combine them into a complete document.",
 		inputSchema: scanDocsTocInputSchema
 	}, async (args) => {
+		const startTime = Date.now();
 		const url = new URL(args.url);
-		if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Only http and https protocols are allowed");
-		if (isPrivateHost(url)) throw new Error("Access to private network addresses is not allowed");
+		if (url.protocol !== "http:" && url.protocol !== "https:") {
+			logger.warn({
+				url: args.url,
+				protocol: url.protocol
+			}, "scan_docs_toc rejected: invalid protocol");
+			throw new Error("Only http and https protocols are allowed");
+		}
+		if (isPrivateHost(url)) {
+			logger.warn({
+				url: args.url,
+				host: url.hostname
+			}, "scan_docs_toc rejected: private host");
+			throw new Error("Access to private network addresses is not allowed");
+		}
+		logger.info({
+			url: args.url,
+			maxDepth: args.max_depth
+		}, "scan_docs_toc started");
 		const controller = createPageController();
 		let tocResult;
 		try {
@@ -818,9 +1110,26 @@ function createTools(server, config) {
 				maxDepth: args.max_depth
 			});
 		} catch (err) {
-			if (isChromiumMissingError(err)) throw new Error("Chromium is not installed. Please call the install_chromium tool to install Chromium first, then retry scan_docs_toc.");
+			if (isChromiumMissingError(err)) {
+				logger.error({
+					url: args.url,
+					err
+				}, "scan_docs_toc failed: chromium not installed");
+				throw new Error("Chromium is not installed. Please call the install_chromium tool to install Chromium first, then retry scan_docs_toc.");
+			}
+			logger.error({
+				url: args.url,
+				err,
+				durationMs: Date.now() - startTime
+			}, "scan_docs_toc failed");
 			throw err;
 		}
+		const durationMs = Date.now() - startTime;
+		logger.info({
+			url: args.url,
+			totalCount: tocResult.totalCount,
+			durationMs
+		}, "scan_docs_toc completed");
 		const resultJson = JSON.stringify(tocResult, null, 2);
 		return { content: [{
 			type: "text",
@@ -831,18 +1140,23 @@ function createTools(server, config) {
 
 //#endregion
 //#region src/index.ts
+const VERSION = "0.1.3";
 async function main() {
 	const config = getConfig();
 	const transport = new StdioServerTransport();
 	const server = new McpServer({
 		name: config.mcpServerName,
-		version: "0.1.3"
+		version: VERSION
 	});
 	createTools(server, config);
 	await server.connect(transport);
+	logger.info({
+		name: config.mcpServerName,
+		version: VERSION
+	}, "mcp server started");
 }
 main().catch((error) => {
-	console.error(error);
+	logger.fatal({ err: error }, "mcp server failed to start");
 	process.exit(1);
 });
 

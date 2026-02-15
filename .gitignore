@@ -2,3 +2,4 @@
 .idea/
 blog.md
 node_modules/
+dist/

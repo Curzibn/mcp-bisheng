@@ -15,7 +15,7 @@
 API域名IP即qyapi.weixin.qq.com的解析地址，由开发者调用企业微信端的接入IP。如果企业需要做防火墙配置，那么可以通过这个接口获取到所有相关的IP段。IP段有变更可能，当IP段变更时，新旧IP段会同时保留一段时间。建议企业每天定时拉取IP段，更新防火墙设置，避免因IP段变更导致网络不通。
 
 **请求方式：**GET（**HTTPS**）  
-**请求地址：** https://qyapi.weixin.qq.com/cgi-bin/get\_api\_domain\_ip?access\_token=ACCESS\_TOKEN （[获取ACCESS\_TOKEN](https://developer.work.weixin.qq.com/document/path/92520/#15074)）
+**请求地址：** https://qyapi.weixin.qq.com/cgi-bin/get\_api\_domain\_ip?access\_token=ACCESS\_TOKEN （[获取ACCESS\_TOKEN](https://developer.work.weixin.qq.com/document/path/92520#15074)）
 
 **请求参数说明：**
 
@@ -35,7 +35,7 @@ API域名IP即qyapi.weixin.qq.com的解析地址，由开发者调用企业微�
 		"182.254.11.176",
 		"182.254.78.66"
     ],
-    "errcode":,
+    "errcode":0,
     "errmsg":"ok"
 }
 ```
@@ -53,11 +53,9 @@ API域名IP即qyapi.weixin.qq.com的解析地址，由开发者调用企业微�
 ```javascript
 {
     "ip_list":[],
-    "errcode":,
+    "errcode":42001,
     "errmsg":"access_token expired, hint: [1576065934_28_e0fae07666aa64636023c1fa7e8f49a4], from ip: 9.30.0.138, more info at https://open.work.weixin.qq.com/devtool/query?e=42001"
 }
 ```
 
 [关于腾讯](http://www.tencent.com/)[用户协议](https://work.weixin.qq.com/eula)[帮助中心](https://work.weixin.qq.com/help)© 1998 - 2026 Tencent Inc. All Rights Reserved
-
-![](https://wwcdn.weixin.qq.com/node/wework/images/BackToTop.ec9811ed71.png)

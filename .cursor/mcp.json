@@ -2,7 +2,10 @@
   "mcpServers": {
     "bisheng": {
       "command": "node",
-      "args": ["bin/mcp-bisheng.js"]
+      "args": ["bin/mcp-bisheng.js"],
+      "env": {
+        "LOG_LEVEL": "info"
+      }
     }
   }
 }
